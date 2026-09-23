@@ -1,6 +1,6 @@
 // 앱 화면을 기기에 저장해 두어 인터넷이 약해도 빨리 열리게 합니다.
 // (기록 데이터 자체는 Firebase가 오프라인 저장/동기화를 처리)
-const CACHE = 'carenote-v7';
+const CACHE = 'carenote-v8';
 const SHELL = ['./', 'index.html', 'app.js', 'style.css', 'firebase-config.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png'];
 
 self.addEventListener('install', e => {

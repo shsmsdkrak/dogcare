@@ -333,6 +333,14 @@ function openSheet(html,onMount){
   onMount&&onMount($('sheetHost').querySelector('.sheet'));
 }
 function closeSheet(){$('sheetHost').innerHTML=''}
+function confirmSheet(title, desc, onYes){
+  openSheet(`
+    <h3>${esc(title)}</h3>
+    ${desc?`<p style="margin:0;color:var(--muted)">${esc(desc)}</p>`:''}
+    <button type="button" class="primary danger-btn" id="cfYes">삭제</button>
+    <button type="button" class="secondary" id="cfNo">취소</button>`,
+  ()=>{ $('cfYes').onclick=()=>{ closeSheet(); onYes(); }; $('cfNo').onclick=closeSheet; });
+}
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSheet()});
 
 function logSheet(type){
@@ -810,8 +818,11 @@ $('timeline').addEventListener('click',e=>{
   const row=e.target.closest('[data-edit-entry]');
   if(row && !e.target.closest('[data-del]')){ entryEditSheet(row.dataset.editEntry); return; }
   const b=e.target.closest('[data-del]'); if(!b) return;
-  if(b.dataset.confirm){ store.removeEntry(S.view,b.dataset.del); toast('기록을 지웠어요'); }
-  else { b.dataset.confirm='1'; b.style.color='var(--bad)'; toast('한 번 더 누르면 삭제돼요'); setTimeout(()=>{delete b.dataset.confirm;b.style.color=''},2500); }
+  const en=entriesOf(S.view).find(x=>x.id===b.dataset.del);
+  const nm=en&&T[en.type]?T[en.type].name:'기록';
+  confirmSheet(`${nm} 기록을 삭제할까요?`, en?`${hm(en.t)}${en.status?` · ${en.status}`:''}${en.by?` · ${en.by}`:''}`:'', ()=>{
+    store.removeEntry(S.view,b.dataset.del); toast('기록을 지웠어요');
+  });
 });
 $('prevDay').onclick=()=>goDay(-1);
 $('nextDay').onclick=()=>goDay(1);
