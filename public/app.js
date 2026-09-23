@@ -224,7 +224,7 @@ function render(){
   const onboarding=!S.fid;
   $('onboard').hidden=!onboarding;
   $('main').hidden=onboarding;
-  $('hdrActions').hidden=onboarding;
+  $('menuBtn').hidden=onboarding;
   if(onboarding){ $('dogName').textContent='멍멍 케어노트'; return; }
 
   const cfg=S.cfg, isToday=S.view===todayKey();
@@ -233,7 +233,6 @@ function render(){
   $('faceBtn').setAttribute('aria-label', S.photo?`${cfg.dogName} 사진 크게 보기`:`${cfg.dogName} 사진 추가`);
   renderProfile();
   document.title=`${cfg.dogName||'우리 강아지'} 케어노트`;
-  $('meName').textContent=S.me||'선택';
   const d=parseKey(S.view);
   const rel=isToday?'오늘':S.view===shiftKey(todayKey(),-1)?'어제':'';
   const md=`${d.getMonth()+1}월 ${d.getDate()}일`;
@@ -575,12 +574,15 @@ function itemsSheet(){
         <span class="irow-name">${esc(i.name)}</span>
         <span class="irow-goal">${i.target?`하루 ${i.target}회`:'기록만'}${i.cycle?` · ${i.cycle}일 주기`:''}</span>
       </button>
+      <button type="button" class="irow-del" data-remove="${esc(i.k)}" aria-label="${esc(i.name)} 삭제">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13"/></svg>
+      </button>
     </div>`;
   openSheet(`
     <h3>케어 목록 편집</h3>
-    <p style="margin:0;color:var(--muted);font-size:13px">항목을 누르면 이름, 아이콘, 하루 목표, 선택지를 바꿀 수 있어요. 왼쪽 손잡이를 잡고 끌면 순서가 바뀌어요. 바꾼 내용은 가족 모두에게 바로 적용돼요.</p>
+    <p style="margin:0;color:var(--muted);font-size:13px">항목을 누르면 이름, 아이콘, 하루 목표, 선택지를 바꿀 수 있어요. 왼쪽 손잡이를 잡고 끌면 순서가 바뀌고, 오른쪽 휴지통으로 삭제해요. 바꾼 내용은 가족 모두에게 바로 적용돼요.</p>
     <div class="ilist" id="ilist">${shown.map(row).join('')||'<div class="empty">보이는 항목이 없어요</div>'}</div>
-    <button type="button" class="secondary" id="addItem">+ 새 항목 추가</button>
+    <button type="button" class="secondary" id="addItem">+ 새 항목 추가하기</button>
     ${hidden.length?`<div class="field"><label>숨긴 항목</label><div class="chips">${hidden.map(i=>`<button type="button" class="chip" data-unhide="${esc(i.k)}">${icon(i.icon,16)} ${esc(i.name)} 다시 보이기</button>`).join('')}</div></div>`:''}
     <button type="button" class="primary" id="itemsDone">완료</button>`,
   sheet=>{
@@ -590,11 +592,30 @@ function itemsSheet(){
       saveItems(next); itemsSheet(); toast('순서를 바꿨어요');
     });
     sheet.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>itemEditSheet(b.dataset.edit));
+    sheet.querySelectorAll('[data-remove]').forEach(b=>b.onclick=()=>itemDeleteSheet(b.dataset.remove));
     sheet.querySelectorAll('[data-unhide]').forEach(b=>b.onclick=()=>{ items.find(i=>i.k===b.dataset.unhide).hidden=false; saveItems(items); itemsSheet(); toast('항목을 다시 보이게 했어요'); });
     $('addItem').onclick=()=>itemEditSheet(null);
     $('itemsDone').onclick=closeSheet;
   });
 }
+function itemDeleteSheet(k){
+  const it=T[k]; if(!it) return;
+  let n=0; for(const d of Object.keys(S.days)) n+=entriesOf(d).filter(e=>e.type===k).length;
+  const apply=items=>{ saveItems(items); itemsSheet(); };
+  openSheet(`
+    <h3><span style="color:var(--accent)">${icon(it.icon,26)}</span>${esc(it.name)}</h3>
+    <p style="margin:0;color:var(--muted)">${n?`최근 기록이 <b>${n}건</b> 있어요. 어떻게 할까요?`:'기록이 없는 항목이에요. 바로 삭제해도 괜찮아요.'}</p>
+    ${n?`<button type="button" class="secondary" id="idHide">숨기기 <span style="font-weight:400;color:var(--muted)">— 지난 기록은 그대로 남아요</span></button>`:''}
+    <button type="button" class="primary danger-btn" id="idDel">완전 삭제</button>
+    <p class="note" style="margin:0;text-align:left">완전 삭제하면 목록에서 사라지고, 이 항목으로 남긴 지난 기록도 화면에 보이지 않게 돼요.</p>
+    <button type="button" class="secondary" id="idNo">취소</button>`,
+  ()=>{
+    if($('idHide')) $('idHide').onclick=()=>{ apply(S.cfg.items.map(i=>i.k===k?{...i,hidden:true}:{...i})); toast('숨겼어요'); };
+    $('idDel').onclick=()=>{ apply(S.cfg.items.filter(i=>i.k!==k)); toast(`${it.name} 항목을 삭제했어요`); };
+    $('idNo').onclick=itemsSheet;
+  });
+}
+
 function itemEditSheet(k){
   const isNew=!k;
   const it=isNew?normItem({k:'c'+Date.now().toString(36),name:'',icon:'star',target:1}):{...T[k]};
@@ -624,7 +645,7 @@ function itemEditSheet(k){
     <button type="button" class="primary" id="ieSave">${isNew?'추가하기':'저장'}</button>
     <div class="row2">
       <button type="button" class="secondary" id="ieBack">목록으로</button>
-      ${isNew?'<span></span>':'<button type="button" class="secondary danger" id="ieHide">이 항목 숨기기</button>'}
+      ${isNew?'<span></span>':'<button type="button" class="secondary danger" id="ieHide">이 항목 삭제</button>'}
     </div>`,
   sheet=>{
     const drawOpts=()=>{
@@ -655,10 +676,7 @@ function itemEditSheet(k){
       const at=items.findIndex(i=>i.k===next.k); if(at>=0) items[at]=next; else items.push(next);
       saveItems(items); toast(isNew?`${name} 항목을 추가했어요`:'저장했어요'); itemsSheet();
     };
-    if($('ieHide')) $('ieHide').onclick=()=>{
-      const items=S.cfg.items.map(i=>i.k===it.k?{...i,hidden:true}:{...i});
-      saveItems(items); toast('숨겼어요. 지난 기록은 그대로 남아요'); itemsSheet();
-    };
+    if($('ieHide')) $('ieHide').onclick=()=>itemDeleteSheet(it.k);
   });
 }
 
@@ -754,6 +772,35 @@ function openLightbox(){
 }
 function closeLightbox(){ $('lightbox').hidden=true; }
 
+function menuSheet(){
+  const rows=[
+    {ic:'star',  t:'기록 돌아보기', d:'달력 · 항목별 달성률 · 가족별 기록', fn:()=>statsSheet()},
+    {ic:'heart', t:'강아지 정보',   d:`사진 · 품종 · 생일 · 몸무게`, fn:settingsSheet},
+    {ic:'brush', t:'케어 목록 편집', d:'항목 추가 · 아이콘 · 목표 · 선택지', fn:itemsSheet},
+    {ic:'home',  t:'가족 초대',     d:'초대 링크 만들어 보내기', fn:inviteSheet}
+  ];
+  openSheet(`
+    <h3>메뉴</h3>
+    <button type="button" class="menu-me" id="menuMe">
+      <span class="menu-me-label">기록자</span>
+      <b>${esc(S.me||'이름 선택하기')}</b>
+      <span class="menu-me-go">바꾸기</span>
+    </button>
+    <div class="menu-list">
+      ${rows.map((r,i)=>`<button type="button" class="menu-row" data-i="${i}">
+        <span class="ic">${icon(r.ic,20)}</span>
+        <span class="menu-txt"><b>${esc(r.t)}</b><span>${esc(r.d)}</span></span>
+        <span class="menu-arrow">›</span>
+      </button>`).join('')}
+    </div>
+    <p class="note" style="margin:0" id="menuNote"></p>`,
+  sheet=>{
+    $('menuMe').onclick=()=>nameSheet(menuSheet);
+    sheet.querySelectorAll('.menu-row').forEach(b=>b.onclick=()=>rows[+b.dataset.i].fn());
+    $('menuNote').textContent=$('syncNote').textContent;
+  });
+}
+
 function inviteSheet(){
   let who='', url=inviteUrl();
   const names=knownNames().filter(n=>n!=='나'&&n!==S.me);
@@ -813,7 +860,7 @@ $('tiles').addEventListener('click',e=>{
   logSheet(b.dataset.type);
 });
 $('upcoming').addEventListener('click',e=>{ const b=e.target.closest('[data-due]'); if(b) logSheet(b.dataset.due); });
-$('statsBtn').onclick=()=>statsSheet();
+
 $('timeline').addEventListener('click',e=>{
   const row=e.target.closest('[data-edit-entry]');
   if(row && !e.target.closest('[data-del]')){ entryEditSheet(row.dataset.editEntry); return; }
@@ -826,11 +873,8 @@ $('timeline').addEventListener('click',e=>{
 });
 $('prevDay').onclick=()=>goDay(-1);
 $('nextDay').onclick=()=>goDay(1);
-$('meBtn').onclick=()=>nameSheet();
 $('kakaoOpen').onclick=()=>{ location.href='kakaotalk://web/openExternal?url='+encodeURIComponent(location.href); };
-$('inviteBtn').onclick=inviteSheet;
-$('settingsBtn').onclick=settingsSheet;
-$('itemsBtn').onclick=itemsSheet;
+$('menuBtn').onclick=menuSheet;
 $('tiles').addEventListener('click',e=>{ if(e.target.closest('#noItems')) itemsSheet(); });
 $('faceBtn').onclick=()=>{ if(!S.fid) return; if(S.photo) openLightbox(); else pickPhoto(); };
 $('lightbox').onclick=e=>{ if(e.target.id==='lbChange'){ closeLightbox(); pickPhoto(); return; } closeLightbox(); };
