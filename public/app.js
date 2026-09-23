@@ -326,12 +326,37 @@ function renderProfile(){
 }
 
 /* ================= 시트 ================= */
-function openSheet(html,onMount){
-  $('sheetHost').innerHTML=`<div class="scrim" id="scrim"><div class="sheet" role="dialog" aria-modal="true">${html}</div></div>`;
+// 시트가 열려 있는 동안 뒤 화면이 스크롤되지 않도록 고정
+let scrollLockY=0, scrollLocked=false;
+function lockScroll(){
+  if(scrollLocked) return;
+  scrollLockY=window.scrollY||0; scrollLocked=true;
+  document.body.style.position='fixed';
+  document.body.style.top=`-${scrollLockY}px`;
+  document.body.style.left='0'; document.body.style.right='0';
+  document.body.style.width='100%';
+}
+function unlockScroll(){
+  if(!scrollLocked) return;
+  scrollLocked=false;
+  document.body.style.position=''; document.body.style.top='';
+  document.body.style.left=''; document.body.style.right=''; document.body.style.width='';
+  window.scrollTo(0,scrollLockY);
+}
+function openSheet(html,onMount,opts){
+  const full=!!(opts&&opts.full), title=(opts&&opts.title)||'';
+  lockScroll();
+  $('sheetHost').innerHTML=`<div class="scrim${full?' full':''}" id="scrim"><div class="sheet${full?' full':''}" role="dialog" aria-modal="true">
+    ${full?`<div class="panel-bar"><span>${esc(title)}</span>
+      <button type="button" class="panel-x" id="panelX" aria-label="닫기">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button></div>`:''}
+    <div class="sheet-body">${html}</div></div></div>`;
   $('scrim').addEventListener('click',e=>{if(e.target.id==='scrim')closeSheet()});
+  if($('panelX')) $('panelX').onclick=closeSheet;
   onMount&&onMount($('sheetHost').querySelector('.sheet'));
 }
-function closeSheet(){$('sheetHost').innerHTML=''}
+function closeSheet(){ $('sheetHost').innerHTML=''; unlockScroll(); }
 function confirmSheet(title, desc, onYes){
   openSheet(`
     <h3>${esc(title)}</h3>
@@ -768,9 +793,9 @@ async function shrinkImage(file){
 }
 function openLightbox(){
   if(!S.photo) return;
-  const lb=$('lightbox'); $('lbImg').src=S.photo; $('lbCap').textContent=S.cfg.dogName; lb.hidden=false;
+  const lb=$('lightbox'); $('lbImg').src=S.photo; $('lbCap').textContent=S.cfg.dogName; lb.hidden=false; lockScroll();
 }
-function closeLightbox(){ $('lightbox').hidden=true; }
+function closeLightbox(){ if($('lightbox').hidden) return; $('lightbox').hidden=true; if(!$('sheetHost').innerHTML) unlockScroll(); }
 
 function menuSheet(){
   const rows=[
@@ -780,7 +805,6 @@ function menuSheet(){
     {ic:'home',  t:'가족 초대',     d:'초대 링크 만들어 보내기', fn:inviteSheet}
   ];
   openSheet(`
-    <h3>메뉴</h3>
     <button type="button" class="menu-me" id="menuMe">
       <span class="menu-me-label">기록자</span>
       <b>${esc(S.me||'이름 선택하기')}</b>
@@ -798,7 +822,7 @@ function menuSheet(){
     $('menuMe').onclick=()=>nameSheet(menuSheet);
     sheet.querySelectorAll('.menu-row').forEach(b=>b.onclick=()=>rows[+b.dataset.i].fn());
     $('menuNote').textContent=$('syncNote').textContent;
-  });
+  }, {full:true, title:'메뉴'});
 }
 
 function inviteSheet(){
