@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
+<title>멍멍 케어노트</title>
+<meta name="description" content="가족이 함께 쓰는 강아지 케어 기록장">
+<meta name="theme-color" content="#0E6B5C">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="케어노트">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<script>try{var t=localStorage.getItem("dogcare.theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jua&family=IBM+Plex+Sans+KR:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap" id="app">
+  <header>
+    <div class="dog">
+      <button type="button" class="face" id="faceBtn" aria-label="강아지 사진">
+        <img id="faceImg" alt="" hidden>
+        <svg id="faceSvg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#1C2825" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 9c-1.5-.5-2.5-2.5-1.8-4.3C4.5 4 6.5 5 7 6.5"/><path d="M19 9c1.5-.5 2.5-2.5 1.8-4.3C19.5 4 17.5 5 17 6.5"/><path d="M6.5 7.5C7.8 5.9 9.8 5 12 5s4.2.9 5.5 2.5c1 1.3 1.5 3 1.5 4.8 0 4-3.1 7.2-7 7.2s-7-3.2-7-7.2c0-1.8.5-3.5 1.5-4.8z"/><circle cx="9.3" cy="11" r=".9" fill="#1C2825"/><circle cx="14.7" cy="11" r=".9" fill="#1C2825"/><path d="M10.8 14.2h2.4l-1.2 1.3z" fill="#1C2825"/></svg>
+      </button>
+      <h1 id="dogName">멍멍 케어노트</h1>
+    </div>
+    <div class="hdr-actions">
+      <button class="iconbtn" id="themeBtn" type="button" aria-label="테마 바꾸기"></button>
+      <span id="hdrActions" class="hdr-actions" hidden>
+      <button class="iconbtn" id="inviteBtn" type="button" aria-label="가족 초대">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.6-3 2.9-5 5.5-5s4.9 2 5.5 5"/><path d="M18 8v6M15 11h6"/></svg>
+      </button>
+      <button class="me" id="meBtn" type="button"><span class="me-label">기록자 </span><b id="meName">-</b></button>
+      </span>
+    </div>
+  </header>
+
+  <div id="banner" class="banner" hidden></div>
+  <div id="kakaoTip" class="kakao-tip" hidden>
+    <span>카카오톡 안에서 열면 매번 새로 시작될 수 있어요. 기본 브라우저로 열고 <b>홈 화면에 추가</b>해 두면 편해요.</span>
+    <button type="button" id="kakaoOpen">브라우저로 열기</button>
+  </div>
+
+  <!-- 처음 화면 -->
+  <section class="onb" id="onboard" hidden>
+    <h2>가족 기록장 시작하기</h2>
+    <p>한 사람이 기록장을 만들고, 초대 링크를 가족 단톡방에 보내면 모두 같은 기록을 보게 돼요. 계정이나 로그인은 필요 없어요.</p>
+    <button class="primary" id="createBtn" type="button">새 가족 기록장 만들기</button>
+    <div class="or">또는</div>
+    <div class="field"><label for="joinInput">받은 초대 링크 붙여넣기</label><input id="joinInput" type="url" placeholder="https://… ?f=…"></div>
+    <button class="secondary" id="joinBtn" type="button">참여하기</button>
+  </section>
+
+  <!-- 메인 화면 -->
+  <div id="main" hidden style="display:contents">
+    <div id="profile"></div>
+    <div class="datebar">
+      <button class="navbtn" id="prevDay" type="button" aria-label="이전 날">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M15 5l-7 7 7 7"/></svg>
+      </button>
+      <div class="d" id="dateLabel">오늘</div>
+      <button class="navbtn" id="nextDay" type="button" aria-label="다음 날">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 5l7 7-7 7"/></svg>
+      </button>
+    </div>
+    <div id="upcoming" hidden></div>
+    <div id="dayArea" class="day-area">
+      <div class="summary" id="summary"></div>
+      <div class="tiles" id="tiles"></div>
+      <section>
+        <h2 id="tlTitle">오늘 기록</h2>
+        <div class="timeline" id="timeline"></div>
+      </section>
+    </div>
+    <p class="note swipe-hint">화면을 좌우로 밀면 날짜가 바뀌어요 · 카드를 길게 누르면 바로 기록돼요</p>
+    <div class="foot">
+      <button class="ghost" id="statsBtn" type="button">기록 돌아보기</button>
+      <button class="ghost" id="settingsBtn" type="button">강아지 정보</button>
+      <button class="ghost" id="itemsBtn" type="button">케어 목록 편집</button>
+    </div>
+    <p class="note" id="syncNote">연결 중…</p>
+  </div>
+</div>
+<div id="sheetHost"></div>
+<div id="lightbox" class="lightbox" hidden role="dialog" aria-label="강아지 사진">
+  <img id="lbImg" alt="">
+  <div class="lb-bar"><span id="lbCap"></span><button type="button" id="lbChange">사진 바꾸기</button></div>
+</div>
+<div id="toastHost"></div>
+<script type="module" src="app.js"></script>
+<script>
+// app.js가 아예 실행되지 못했을 때 원인을 화면에 표시
+window.addEventListener('error',function(e){window.__appErr=(e.message||'')+(e.filename?' ('+e.filename.split('/').pop()+')':'');},true);
+setTimeout(function(){
+  if(document.getElementById('onboard').hidden && document.getElementById('main').hidden){
+    var b=document.getElementById('banner'); b.hidden=false;
+    b.textContent='앱을 불러오지 못했어요. 올린 폴더에 app.js, style.css, firebase-config.js가 index.html과 같은 위치에 있는지 확인해 주세요.'+(window.__appErr?' 오류: '+window.__appErr:'');
+  }
+},4000);
+if('serviceWorker' in navigator && location.protocol==='https:'){addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));}
+</script>
+</body>
+</html>

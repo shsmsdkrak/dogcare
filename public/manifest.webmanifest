@@ -1,0 +1,14 @@
+{
+  "name": "멍멍 케어노트",
+  "short_name": "케어노트",
+  "description": "가족이 함께 쓰는 강아지 케어 기록장",
+  "display": "standalone",
+  "scope": "./",
+  "background_color": "#EEF3F1",
+  "theme_color": "#0E6B5C",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

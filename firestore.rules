@@ -1,0 +1,13 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 가족 코드(초대 링크의 f=값)를 아는 사람만 해당 가족 기록에 접근할 수 있어요.
+    // 코드는 24자리 무작위 값이라 추측이 사실상 불가능합니다.
+    // request.auth 는 앱이 자동으로 하는 '익명 로그인'이라 가족은 아무것도 하지 않아도 돼요.
+    match /families/{familyId}/{document=**} {
+      allow read, write: if request.auth != null
+                         && familyId.matches('^[A-Za-z0-9]{20,40}$');
+    }
+    // 가족 목록 전체 조회 등 그 밖의 모든 접근은 차단
+  }
+}
