@@ -64,12 +64,36 @@ function defaultItems(targets){
   const tg={...DEFAULT_TARGETS,...(targets||{})};
   return TYPES.map(t=>normItem({...t, icon:t.k, target:tg[t.k]}));
 }
+function normDog(d,i){
+  d=d||{};
+  return {id:String(d.id||('d'+i)), name:String(d.name||'우리 강아지').slice(0,14), profile:{...DEFAULT_PROFILE,...(d.profile||{})}};
+}
+function normMember(m){
+  m=m||{};
+  return {name:String(m.name||'').trim().slice(0,12), color:/^#[0-9A-Fa-f]{6}$/.test(m.color||'')?m.color:''};
+}
+function normSupply(x){
+  x=x||{};
+  return {id:String(x.id||('s'+Date.now().toString(36))), name:String(x.name||'사료').slice(0,16),
+    unit:['g','kg','개','포','캔'].includes(x.unit)?x.unit:'g',
+    remain:Math.max(0,Number(x.remain)||0), perDay:Math.max(0,Number(x.perDay)||0),
+    updated:/^\d{4}-\d{2}-\d{2}$/.test(x.updated||'')?x.updated:todayKey()};
+}
 function normCfg(c){ c=c||{};
-  return {dogName:c.dogName||'우리 강아지', profile:{...DEFAULT_PROFILE,...(c.profile||{})},
+  const dogs = Array.isArray(c.dogs)&&c.dogs.length ? c.dogs.map(normDog) : [normDog({id:'main',name:c.dogName,profile:c.profile},0)];
+  return {dogs,
+    dogName:dogs[0].name, profile:dogs[0].profile,
+    members: Array.isArray(c.members)?c.members.map(normMember).filter(m=>m.name):[],
+    supplies: Array.isArray(c.supplies)?c.supplies.map(normSupply):[],
     items: Array.isArray(c.items)&&c.items.length ? c.items.map(normItem) : defaultItems(c.targets)};
 }
+function curDog(){ return (S.cfg&&(S.cfg.dogs.find(d=>d.id===S.dog)||S.cfg.dogs[0]))||normDog({},0); }
+const curPhoto = ()=>(S.photos&&S.photos[curDog().id])||'';
 let T = {};
-function setCfg(c){ S.cfg=normCfg(c); T=Object.fromEntries(S.cfg.items.map(i=>[i.k,i])); }
+function setCfg(c){
+  S.cfg=normCfg(c); T=Object.fromEntries(S.cfg.items.map(i=>[i.k,i]));
+  if(!S.cfg.dogs.some(d=>d.id===S.dog)){ S.dog=S.cfg.dogs[0].id; ls.set('dogcare.dog',S.dog); }
+}
 const activeItems = ()=>S.cfg.items.filter(i=>!i.hidden);
 // 선택지가 많으면 드롭다운, 적으면 칩 버튼 (항목별로 바꿀 수 있음)
 const pickMode = it=>it.pick || ((it.options||[]).length>3?'select':'chip');
@@ -109,7 +133,7 @@ const ls = {
   set(k,v){try{localStorage.setItem(k,v)}catch(e){}}
 };
 
-const S = {days:{}, cfg:null, photo:'', showDone:ls.get('dogcare.showDone')==='1', view:todayKey(), me:ls.get('dogcare.me')||'', status:'connecting', fid:null};
+const S = {days:{}, cfg:null, photos:{}, dog:ls.get('dogcare.dog')||'main', showDone:ls.get('dogcare.showDone')==='1', view:todayKey(), me:ls.get('dogcare.me')||'', status:'connecting', fid:null};
 let store = null;
 setCfg({});
 
@@ -174,8 +198,14 @@ async function firebaseStore(fid){
     removeEntry(k,id){ fs.updateDoc(dayRef(k),{[`entries.${id}`]:fs.deleteField()}).catch(fail); },
     updateEntry(k,id,entry){ fs.setDoc(dayRef(k),{date:k,entries:{[id]:entry}},{merge:true}).catch(fail); },
     saveConfig(cfg){ fs.setDoc(cfgRef,cfg).catch(fail); },
-    subscribePhoto(cb){ return fs.onSnapshot(photoRef, s=>cb(s.exists()?s.data().data:''), ()=>{}); },
-    savePhoto(data){ fs.setDoc(photoRef,{data:data||'',updatedAt:Date.now(),by:S.me||''}).catch(fail); }
+    subscribePhoto(cb){ return fs.onSnapshot(photoRef, s2=>{
+      if(!s2.exists()) return cb(null);
+      const v=s2.data(); cb(v.byDog||{main:v.data||''});
+    }, ()=>{}); },
+    savePhoto(byDog){ fs.setDoc(photoRef,{byDog,updatedAt:Date.now(),by:S.me||''}).catch(fail); },
+    // 가끔 여는 화면(사진 일지·지출)은 구독 대신 1회 조회로 읽기 횟수를 아껴요
+    async getDocData(path){ try{ const d2=await fs.getDoc(fs.doc(db,...base,...path.split('/'))); return d2.exists()?d2.data():null; }catch(e){ console.error(e); return null; } },
+    async setDocData(path,data,merge){ try{ await fs.setDoc(fs.doc(db,...base,...path.split('/')),data,{merge:merge!==false}); return true; }catch(e){ fail(e); return false; } }
   };
 }
 
@@ -191,14 +221,20 @@ function memoryStore(){
     updateEntry(k,id,e){ days[k]=days[k]||{date:k,entries:{}}; days[k].entries[id]=e; emit(); },
     saveConfig(c){ cfg=c; ccb(c); },
     subscribePhoto(cb){ this._pcb=cb; },
-    savePhoto(d){ this._pcb&&this._pcb(d); }
+    savePhoto(d){ this._pcb&&this._pcb(d); },
+    _docs:{},
+    async getDocData(path){ return this._docs[path]||null; },
+    async setDocData(path,data,merge){ this._docs[path]=merge===false?data:Object.assign({},this._docs[path]||{},data); return true; }
   };
 }
 
 /* ================= 데이터 헬퍼 ================= */
 function entriesOf(key){
   const e=(S.days[key]&&S.days[key].entries)||{};
-  return Object.entries(e).map(([id,v])=>({id,...v})).filter(x=>x&&T[x.type]).sort((a,b)=>b.t-a.t);
+  const first=S.cfg?S.cfg.dogs[0].id:'main';
+  return Object.entries(e).map(([id,v])=>({id,...v}))
+    .filter(x=>x&&T[x.type]&&((x.dog||first)===(S.dog||first)))
+    .sort((a,b)=>b.t-a.t);
 }
 function lastOf(type){
   let best=null;
@@ -212,7 +248,8 @@ function streakOf(type){
   return n;
 }
 function knownNames(){
-  const s=new Set(['엄마','아빠','언니','오빠','누나','형','나']);
+  const s=new Set(((S.cfg&&S.cfg.members)||[]).map(m=>m.name));
+  if(!s.size) ['엄마','아빠','언니','오빠','누나','형','나'].forEach(x=>s.add(x));
   for(const k of Object.keys(S.days)) for(const e of entriesOf(k)) if(e.by) s.add(e.by);
   return [...s].slice(0,12);
 }
@@ -222,6 +259,8 @@ const slotName = k=>(SLOTS.find(x=>x.k===k)||SLOTS[3]).name;
 // 기록자별 색 (이름에서 고정적으로 뽑아요)
 const WHO_COLORS=['#0E6B5C','#C2761B','#2F6FB5','#9B4DA8','#1F8A4C','#C0453B','#7A6B1E','#3E7F8E'];
 function whoColor(name){
+  const m=S.cfg&&S.cfg.members.find(x=>x.name===name);
+  if(m&&m.color) return m.color;
   const n=String(name||''); let h=0;
   for(let i=0;i<n.length;i++) h=(h*31+n.charCodeAt(i))>>>0;
   return WHO_COLORS[h%WHO_COLORS.length];
@@ -240,11 +279,13 @@ function render(){
   if(onboarding){ $('dogName').textContent='멍멍 케어노트'; return; }
 
   const cfg=S.cfg, isToday=S.view===todayKey();
-  $('dogName').textContent=cfg.dogName||'우리 강아지';
-  const fi=$('faceImg'); if(S.photo){ if(fi.src!==S.photo) fi.src=S.photo; fi.hidden=false; $('faceSvg').hidden=true; } else { fi.hidden=true; fi.removeAttribute('src'); $('faceSvg').hidden=false; }
-  $('faceBtn').setAttribute('aria-label', S.photo?`${cfg.dogName} 사진 크게 보기`:`${cfg.dogName} 사진 추가`);
+  $('dogName').textContent=curDog().name;
+  $('dogName').className=S.cfg.dogs.length>1?'switchable':'';
+  const ph=curPhoto();
+  const fi=$('faceImg'); if(ph){ if(fi.src!==ph) fi.src=ph; fi.hidden=false; $('faceSvg').hidden=true; } else { fi.hidden=true; fi.removeAttribute('src'); $('faceSvg').hidden=false; }
+  $('faceBtn').setAttribute('aria-label', ph?`${curDog().name} 사진 크게 보기`:`${curDog().name} 사진 추가`);
   renderProfile();
-  document.title=`${cfg.dogName||'우리 강아지'} 케어노트`;
+  document.title=`${curDog().name} 케어노트`;
   const d=parseKey(S.view);
   const rel=isToday?'오늘':S.view===shiftKey(todayKey(),-1)?'어제':'';
   const md=`${d.getMonth()+1}월 ${d.getDate()}일`;
@@ -343,12 +384,12 @@ function render(){
 }
 
 function renderProfile(){
-  const p=S.cfg.profile||DEFAULT_PROFILE;
+  const p=curDog().profile||DEFAULT_PROFILE;
   const bits=[p.breed, p.sex?(p.sex+(p.neutered?' · 중성화':'')):'', ageText(p.birth), p.weight?`${p.weight}kg`:''].filter(Boolean);
   const together=daysSince(p.adopted);
   const el=$('profile');
   if(!bits.length && !together && !p.memo){
-    el.innerHTML=`<button class="profile-empty" type="button" data-open="settings">+ ${esc(S.cfg.dogName)} 정보 입력하기 <span>품종 · 생일 · 몸무게</span></button>`;
+    el.innerHTML=`<button class="profile-empty" type="button" data-open="settings">+ ${esc(curDog().name)} 정보 입력하기 <span>품종 · 생일 · 몸무게</span></button>`;
     return;
   }
   const bday = p.birth && p.birth.slice(5)===todayKey().slice(5) ? '<span class="badge">오늘 생일!</span>' : '';
@@ -425,7 +466,7 @@ function logSheet(type){
       const [h,m]=($('logTime').value||defTime).split(':').map(Number);
       const d=parseKey(S.view); d.setHours(h,m,0,0);
       const sel=sheet.querySelector('#opts .chip[aria-pressed="true"]');
-      const entry={type,t:d.getTime(),by:S.me};
+      const entry={type,t:d.getTime(),by:S.me,dog:curDog().id};
       if(sel) entry.status=sel.dataset.o;
       else if($('optSel')){
         const v=$('optSel').value;
@@ -452,23 +493,25 @@ function nameSheet(then){
       sheet.querySelectorAll('#nameChips .chip').forEach(x=>x.setAttribute('aria-pressed',String(x===c)));});
     $('nameSave').onclick=()=>{
       const v=$('nameInput').value.trim(); if(!v){$('nameInput').focus();return}
-      setMe(v); closeSheet(); render(); then&&then();
+      setMe(v);
+      if(S.cfg && !S.cfg.members.some(m=>m.name===v)) saveCfg({...S.cfg, members:[...S.cfg.members,{name:v,color:''}]});
+      closeSheet(); render(); then&&then();
     };
   });
 }
 
 function settingsSheet(){
-  const pf={...DEFAULT_PROFILE,...(S.cfg.profile||{})};
+  const pf={...DEFAULT_PROFILE,...(curDog().profile||{})};
   openSheet(`
     <h3>강아지 정보</h3>
     <div class="photo-row">
-      <button type="button" class="photo-prev" id="photoPrev" aria-label="사진 선택">${S.photo?`<img src="${S.photo}" alt="">`:icon('heart',26)}</button>
+      <button type="button" class="photo-prev" id="photoPrev" aria-label="사진 선택">${curPhoto()?`<img src="${curPhoto()}" alt="">`:icon('heart',26)}</button>
       <div class="photo-actions">
-        <button type="button" class="secondary" id="photoPick">${S.photo?'사진 바꾸기':'사진 추가'}</button>
-        ${S.photo?'<button type="button" class="linkbtn" id="photoDel">사진 삭제</button>':''}
+        <button type="button" class="secondary" id="photoPick">${curPhoto()?'사진 바꾸기':'사진 추가'}</button>
+        ${curPhoto()?'<button type="button" class="linkbtn" id="photoDel">사진 삭제</button>':''}
       </div>
     </div>
-    <div class="field"><label for="dogInput">강아지 이름</label><input id="dogInput" type="text" maxlength="14" value="${esc(S.cfg.dogName)}"></div>
+    <div class="field"><label for="dogInput">강아지 이름</label><input id="dogInput" type="text" maxlength="14" value="${esc(curDog().name)}"></div>
     <div class="grid2">
       <div class="field"><label for="pBreed">품종</label><input id="pBreed" type="text" maxlength="20" value="${esc(pf.breed)}" placeholder="예: 말티즈"></div>
       <div class="field"><label for="pWeight">몸무게 (kg)</label><input id="pWeight" type="number" inputmode="decimal" step="0.1" min="0" max="99" value="${esc(pf.weight)}" placeholder="0.0"></div>
@@ -483,7 +526,7 @@ function settingsSheet(){
     <button class="primary" id="cfgSave" type="button">모두에게 적용</button>`,
   sheet=>{
     $('photoPick').onclick=$('photoPrev').onclick=()=>pickPhoto();
-    if($('photoDel')) $('photoDel').onclick=()=>{ S.photo=''; store.savePhoto(''); render(); settingsSheet(); toast('사진을 삭제했어요'); };
+    if($('photoDel')) $('photoDel').onclick=()=>{ S.photos={...S.photos,[curDog().id]:''}; store.savePhoto(S.photos); render(); settingsSheet(); toast('사진을 삭제했어요'); };
     sheet.querySelectorAll('#pSex .chip[data-v]').forEach(c=>c.onclick=()=>{
       const on=c.getAttribute('aria-pressed')!=='true';
       sheet.querySelectorAll('#pSex .chip[data-v]').forEach(x=>x.setAttribute('aria-pressed','false'));
@@ -495,8 +538,9 @@ function settingsSheet(){
       const w=$('pWeight').value.trim();
       const profile={breed:$('pBreed').value.trim(), sex:sexEl?sexEl.dataset.v:'', neutered:$('pNeut').getAttribute('aria-pressed')==='true',
         birth:$('pBirth').value, weight:w?String(Math.round(parseFloat(w)*10)/10):'', adopted:$('pAdopted').value, memo:$('pMemo').value.trim()};
-      const cfg={...S.cfg, dogName:$('dogInput').value.trim()||'우리 강아지', profile};
-      setCfg(cfg); store.saveConfig(S.cfg); render(); closeSheet(); toast('설정을 저장했어요');
+      const name=$('dogInput').value.trim()||'우리 강아지';
+      const dogs=S.cfg.dogs.map(d=>d.id===curDog().id?{...d,name,profile}:d);
+      saveCfg({...S.cfg, dogs}); closeSheet(); toast('설정을 저장했어요');
     };
   });
 }
@@ -551,7 +595,7 @@ function quickLog(type){
   if(!S.me){ nameSheet(()=>quickLog(type)); return; }
   const d=S.view===todayKey()?new Date():(()=>{const x=parseKey(S.view);x.setHours(9,0,0,0);return x})();
   const id=newId(), day=S.view;
-  store.addEntry(day,id,{type,t:d.getTime(),by:S.me});
+  store.addEntry(day,id,{type,t:d.getTime(),by:S.me,dog:curDog().id});
   if(navigator.vibrate) try{navigator.vibrate(12)}catch(e){}
   toast(`${t.name} 바로 기록했어요`, ()=>{ store.removeEntry(day,id); toast('되돌렸어요'); });
 }
@@ -582,7 +626,7 @@ function entryEditSheet(id){
       let status='';
       if($('eeSel')) status=$('eeSel').value==='__etc'?$('eeEtc').value.trim():$('eeSel').value;
       else status=$('eeEtc').value.trim();
-      const next={type:e.type,t:d.getTime(),by:e.by||S.me};
+      const next={type:e.type,t:d.getTime(),by:e.by||S.me,dog:e.dog||curDog().id};
       if(status) next.status=status.slice(0,20);
       const note=$('eeNote').value.trim(); if(note) next.note=note;
       store.updateEntry(S.view,id,next); closeSheet(); toast('기록을 고쳤어요');
@@ -670,7 +714,8 @@ function statsSheet(range){
 }
 
 /* ---------- 케어 항목 · 목표 편집 ---------- */
-function saveItems(items){ setCfg({...S.cfg, items}); store.saveConfig(S.cfg); render(); }
+function saveCfg(next){ setCfg(next); store.saveConfig(S.cfg); render(); }
+function saveItems(items){ saveCfg({...S.cfg, items}); }
 function itemsSheet(){
   const items=S.cfg.items.map(i=>({...i}));
   const shown=items.filter(i=>!i.hidden), hidden=items.filter(i=>i.hidden);
@@ -851,6 +896,316 @@ function initDragSort(list, onDone){
   });
 }
 
+
+/* ---------- 가족(기록자) 관리 ---------- */
+function membersSheet(){
+  const ms=S.cfg.members;
+  openSheet(`
+    <h3>가족 · 기록자</h3>
+    <p style="margin:0;color:var(--muted);font-size:13px">이름과 색을 정해두면 기록마다 색으로 누가 했는지 보여요.</p>
+    <div class="ilist">${ms.length?ms.map(m=>`<div class="irow">
+        <button type="button" class="irow-main" data-mem="${esc(m.name)}">
+          <span class="who-chip" style="background:${whoColor(m.name)}"></span>
+          <span class="irow-name">${esc(m.name)}</span>
+          ${m.name===S.me?'<span class="irow-goal">나</span>':''}
+        </button>
+        <button type="button" class="irow-del" data-memdel="${esc(m.name)}" aria-label="${esc(m.name)} 삭제">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13"/></svg>
+        </button></div>`).join(''):'<div class="empty">아직 등록한 가족이 없어요</div>'}</div>
+    ${(()=>{const found=new Set(); Object.keys(S.days).forEach(k=>entriesOf(k).forEach(e=>{ if(e.by&&!ms.some(m=>m.name===e.by)) found.add(e.by); }));
+      if(S.me&&!ms.some(m=>m.name===S.me)) found.add(S.me);
+      const arr=[...found].slice(0,8);
+      return arr.length?`<div class="field"><label>기록에 있는 이름</label><div class="chips">${arr.map(n=>`<button type="button" class="chip" data-quick="${esc(n)}">+ ${esc(n)}</button>`).join('')}</div></div>`:'';})()}
+    <button type="button" class="secondary" id="memAdd">+ 가족 추가하기</button>
+    <button type="button" class="primary" id="memDone">완료</button>`,
+  sheet=>{
+    sheet.querySelectorAll('[data-mem]').forEach(b=>b.onclick=()=>memberEditSheet(b.dataset.mem));
+    sheet.querySelectorAll('[data-memdel]').forEach(b=>b.onclick=()=>{
+      const nm=b.dataset.memdel;
+      confirmSheet(`${nm}님을 목록에서 뺄까요?`,'지난 기록은 그대로 남아요.',()=>{
+        saveCfg({...S.cfg, members:S.cfg.members.filter(m=>m.name!==nm)}); membersSheet(); toast('뺐어요');
+      });
+    });
+    sheet.querySelectorAll('[data-quick]').forEach(b=>b.onclick=()=>{
+      const nm=b.dataset.quick;
+      saveCfg({...S.cfg, members:[...S.cfg.members,{name:nm,color:''}]}); membersSheet(); toast(`${nm}님을 추가했어요`);
+    });
+    $('memAdd').onclick=()=>memberEditSheet(null);
+    $('memDone').onclick=menuSheet;
+  });
+}
+function memberEditSheet(name){
+  const isNew=!name;
+  const m=isNew?{name:'',color:''}:{...(S.cfg.members.find(x=>x.name===name)||{name,color:''})};
+  let color=m.color||whoColor(m.name||'새 가족');
+  openSheet(`
+    <h3>${isNew?'가족 추가':'가족 수정'}</h3>
+    <div class="field"><label for="memName">이름</label><input id="memName" type="text" maxlength="12" value="${esc(m.name)}" placeholder="예: 엄마"></div>
+    <div class="field"><label>색</label><div class="colorgrid" id="memColors">
+      ${WHO_COLORS.map(c=>`<button type="button" data-c="${c}" style="background:${c}" aria-pressed="${c===color}" aria-label="색 선택"></button>`).join('')}
+    </div></div>
+    <button type="button" class="primary" id="memSave">${isNew?'추가':'저장'}</button>
+    ${isNew?'':'<p class="note" style="margin:0;text-align:left">이름을 바꾸면 지난 기록은 예전 이름으로 남아요.</p>'}
+    <button type="button" class="secondary" id="memBack">목록으로</button>`,
+  sheet=>{
+    sheet.querySelectorAll('#memColors button').forEach(b=>b.onclick=()=>{
+      color=b.dataset.c; sheet.querySelectorAll('#memColors button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));
+    });
+    $('memBack').onclick=membersSheet;
+    $('memSave').onclick=()=>{
+      const nm=$('memName').value.trim().slice(0,12);
+      if(!nm){ $('memName').focus(); toast('이름을 입력해 주세요'); return; }
+      const rest=S.cfg.members.filter(x=>x.name!==m.name && x.name!==nm);
+      saveCfg({...S.cfg, members:[...rest,{name:nm,color}]});
+      if(m.name && m.name===S.me) setMe(nm);
+      membersSheet(); toast(isNew?`${nm}님을 추가했어요`:'저장했어요');
+    };
+  });
+}
+
+/* ---------- 강아지 전환 · 추가 ---------- */
+function dogsSheet(){
+  openSheet(`
+    <h3>강아지</h3>
+    <div class="ilist">${S.cfg.dogs.map(d=>`<div class="irow">
+      <button type="button" class="irow-main" data-dog="${esc(d.id)}">
+        <span class="dog-av">${S.photos[d.id]?`<img src="${S.photos[d.id]}" alt="">`:icon('heart',18)}</span>
+        <span class="irow-name">${esc(d.name)}</span>
+        ${d.id===curDog().id?'<span class="irow-goal">보는 중</span>':''}
+      </button>
+      ${S.cfg.dogs.length>1?`<button type="button" class="irow-del" data-dogdel="${esc(d.id)}" aria-label="${esc(d.name)} 삭제">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13"/></svg></button>`:''}
+    </div>`).join('')}</div>
+    <button type="button" class="secondary" id="dogAdd">+ 강아지 추가하기</button>
+    <p class="note" style="margin:0;text-align:left">케어 목록과 가족은 함께 쓰고, 기록·사진·정보는 강아지마다 따로 남아요.</p>
+    <button type="button" class="primary" id="dogDone">완료</button>`,
+  sheet=>{
+    sheet.querySelectorAll('[data-dog]').forEach(b=>b.onclick=()=>{
+      S.dog=b.dataset.dog; ls.set('dogcare.dog',S.dog); closeSheet(); render(); toast(`${curDog().name} 기록을 보고 있어요`);
+    });
+    sheet.querySelectorAll('[data-dogdel]').forEach(b=>b.onclick=()=>{
+      const d=S.cfg.dogs.find(x=>x.id===b.dataset.dogdel);
+      confirmSheet(`${d.name}를 목록에서 뺄까요?`,'이 강아지의 기록은 화면에 보이지 않게 돼요.',()=>{
+        saveCfg({...S.cfg, dogs:S.cfg.dogs.filter(x=>x.id!==d.id)}); dogsSheet(); toast('뺐어요');
+      });
+    });
+    $('dogAdd').onclick=()=>{
+      openSheet(`<h3>강아지 추가</h3>
+        <div class="field"><label for="newDog">이름</label><input id="newDog" type="text" maxlength="14" placeholder="예: 두부"></div>
+        <button type="button" class="primary" id="newDogSave">추가</button>
+        <button type="button" class="secondary" id="newDogBack">뒤로</button>`,
+      ()=>{
+        $('newDogBack').onclick=dogsSheet;
+        $('newDogSave').onclick=()=>{
+          const nm=$('newDog').value.trim(); if(!nm){ $('newDog').focus(); return; }
+          const id='d'+Date.now().toString(36);
+          saveCfg({...S.cfg, dogs:[...S.cfg.dogs, {id, name:nm, profile:{...DEFAULT_PROFILE}}]});
+          S.dog=id; ls.set('dogcare.dog',id); render(); dogsSheet(); toast(`${nm} 추가 완료`);
+        };
+      });
+    };
+    $('dogDone').onclick=menuSheet;
+  });
+}
+
+/* ---------- 사료 · 간식 재고 ---------- */
+function supplyState(x){
+  const used=Math.max(0,daysBetween(x.updated,todayKey()))*x.perDay;
+  const remain=Math.max(0,x.remain-used);
+  const daysLeft=x.perDay>0?Math.floor(remain/x.perDay):null;
+  return {remain:Math.round(remain*10)/10, daysLeft, outDate:daysLeft!==null?shiftKey(todayKey(),daysLeft):null};
+}
+const daysBetween=(a,b)=>Math.round((parseKey(b)-parseKey(a))/864e5);
+function suppliesSheet(){
+  const list=S.cfg.supplies;
+  openSheet(`
+    <h3>사료 · 간식 재고</h3>
+    <p style="margin:0;color:var(--muted);font-size:13px">남은 양과 하루 사용량을 적어두면 언제 떨어질지 계산해 드려요.</p>
+    <div class="ilist">${list.length?list.map(x=>{
+      const st=supplyState(x), pct=x.remain>0?Math.round(st.remain/x.remain*100):0;
+      const warn=st.daysLeft!==null&&st.daysLeft<=7;
+      return `<div class="irow"><button type="button" class="irow-main" data-sup="${esc(x.id)}">
+        <span class="ic">${icon('food',20)}</span>
+        <span class="menu-txt"><b>${esc(x.name)}</b>
+          <span>${st.remain}${x.unit} 남음${st.daysLeft!==null?` · ${st.daysLeft===0?'오늘 소진':`약 ${st.daysLeft}일치`}`:''}</span>
+          <span class="bar-track" style="margin-top:6px"><i class="${warn?'warnbar':''}" style="width:${Math.max(2,Math.min(100,pct))}%"></i></span>
+        </span></button>
+        <button type="button" class="irow-del" data-supdel="${esc(x.id)}" aria-label="${esc(x.name)} 삭제">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13"/></svg></button></div>`;
+    }).join(''):'<div class="empty">등록한 재고가 없어요</div>'}</div>
+    <button type="button" class="secondary" id="supAdd">+ 재고 추가하기</button>
+    <button type="button" class="primary" id="supDone">완료</button>`,
+  sheet=>{
+    sheet.querySelectorAll('[data-sup]').forEach(b=>b.onclick=()=>supplyEditSheet(b.dataset.sup));
+    sheet.querySelectorAll('[data-supdel]').forEach(b=>b.onclick=()=>{
+      const x=S.cfg.supplies.find(v=>v.id===b.dataset.supdel);
+      confirmSheet(`${x.name} 재고를 삭제할까요?`,'',()=>{ saveCfg({...S.cfg, supplies:S.cfg.supplies.filter(v=>v.id!==x.id)}); suppliesSheet(); toast('삭제했어요'); });
+    });
+    $('supAdd').onclick=()=>supplyEditSheet(null);
+    $('supDone').onclick=menuSheet;
+  });
+}
+function supplyEditSheet(id){
+  const isNew=!id;
+  const x=isNew?normSupply({name:'',unit:'g'}):{...S.cfg.supplies.find(v=>v.id===id)};
+  const st=isNew?null:supplyState(x);
+  let unit=x.unit;
+  openSheet(`
+    <h3>${isNew?'재고 추가':'재고 수정'}</h3>
+    <div class="field"><label for="supName">이름</label><input id="supName" type="text" maxlength="16" value="${esc(x.name)}" placeholder="예: 연어 사료"></div>
+    <div class="field"><label>단위</label><div class="chips" id="supUnit">
+      ${['g','kg','개','포','캔'].map(u=>`<button type="button" class="chip" data-u="${u}" aria-pressed="${u===unit}">${u}</button>`).join('')}</div></div>
+    <div class="grid2">
+      <div class="field"><label for="supRemain">남은 양</label><input id="supRemain" type="number" inputmode="decimal" step="0.1" min="0" value="${isNew?'':st.remain}" placeholder="0"></div>
+      <div class="field"><label for="supPerDay">하루 사용량</label><input id="supPerDay" type="number" inputmode="decimal" step="0.1" min="0" value="${x.perDay||''}" placeholder="0"></div>
+    </div>
+    ${isNew?'':`<p class="note" style="margin:0;text-align:left">${st.daysLeft!==null?`지금 속도면 ${st.outDate.replace(/-/g,'.')}쯤 떨어져요.`:'하루 사용량을 적으면 소진 예상일을 알려드려요.'}</p>`}
+    <button type="button" class="primary" id="supSave">${isNew?'추가':'저장'}</button>
+    <button type="button" class="secondary" id="supBack">목록으로</button>`,
+  sheet=>{
+    sheet.querySelectorAll('#supUnit .chip').forEach(b=>b.onclick=()=>{
+      unit=b.dataset.u; sheet.querySelectorAll('#supUnit .chip').forEach(c=>c.setAttribute('aria-pressed',String(c===b)));
+    });
+    $('supBack').onclick=suppliesSheet;
+    $('supSave').onclick=()=>{
+      const name=$('supName').value.trim(); if(!name){ $('supName').focus(); toast('이름을 입력해 주세요'); return; }
+      const next=normSupply({...x, name, unit, remain:$('supRemain').value, perDay:$('supPerDay').value, updated:todayKey()});
+      const rest=S.cfg.supplies.filter(v=>v.id!==next.id);
+      saveCfg({...S.cfg, supplies:[...rest,next]});
+      suppliesSheet(); toast(isNew?'추가했어요':'저장했어요');
+    };
+  });
+}
+
+/* ---------- 지출 기록 ---------- */
+const EXP_CATS=['사료','간식','병원','미용','용품','기타'];
+const wonFmt=n=>Number(n||0).toLocaleString('ko-KR');
+async function expenseSheet(ym){
+  const month=ym||todayKey().slice(0,7);
+  openSheet('<h3>지출</h3><div class="empty">불러오는 중…</div>',null,{full:true,title:'지출'});
+  const doc=await store.getDocData('expenses/'+month) || {};
+  const items=Object.entries(doc.items||{}).map(([id,v])=>({id,...v})).sort((a,b)=>b.t-a.t);
+  const total=items.reduce((a,b)=>a+(Number(b.amount)||0),0);
+  const byCat={}; items.forEach(i=>{ byCat[i.cat||'기타']=(byCat[i.cat||'기타']||0)+(Number(i.amount)||0); });
+  const [y,m]=month.split('-').map(Number);
+  const prev=`${m===1?y-1:y}-${String(m===1?12:m-1).padStart(2,'0')}`;
+  const next=`${m===12?y+1:y}-${String(m===12?1:m+1).padStart(2,'0')}`;
+  openSheet(`
+    <div class="datebar">
+      <button class="navbtn" id="expPrev" type="button" aria-label="이전 달">‹</button>
+      <div class="d">${y}년 ${m}월<small>총 ${wonFmt(total)}원</small></div>
+      <button class="navbtn" id="expNext" type="button" aria-label="다음 달" ${next>todayKey().slice(0,7)?'disabled':''}>›</button>
+    </div>
+    ${Object.keys(byCat).length?`<div class="bars">${Object.entries(byCat).sort((a,b)=>b[1]-a[1]).map(([c,v])=>`
+      <div class="bar"><span class="bar-name">${esc(c)}</span>
+        <span class="bar-track"><i style="width:${total?Math.round(v/total*100):0}%"></i></span>
+        <span class="bar-val num">${wonFmt(v)}</span></div>`).join('')}</div>`:''}
+    <button type="button" class="secondary" id="expAdd">+ 지출 추가하기</button>
+    <div class="timeline">${items.length?items.map(i=>`
+      <div class="row exp-row">
+        <span class="time num">${new Date(i.t).getDate()}일</span>
+        <span class="what"><b>${esc(i.cat||'기타')}</b>${i.memo?` <span>· ${esc(i.memo)}</span>`:''}<br>${whoDot(i.by)}</span>
+        <span class="num exp-amt">${wonFmt(i.amount)}원</span>
+        <button class="del" type="button" data-expdel="${esc(i.id)}" aria-label="삭제">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>`).join(''):'<div class="empty">이 달 지출 기록이 없어요</div>'}</div>`,
+  sheet=>{
+    $('expPrev').onclick=()=>expenseSheet(prev);
+    $('expNext').onclick=()=>{ if(next<=todayKey().slice(0,7)) expenseSheet(next); };
+    $('expAdd').onclick=()=>expenseAddSheet(month);
+    sheet.querySelectorAll('[data-expdel]').forEach(b=>b.onclick=()=>{
+      const it=items.find(x=>x.id===b.dataset.expdel);
+      confirmSheet('이 지출을 삭제할까요?',`${it.cat} ${wonFmt(it.amount)}원`,async()=>{
+        const rest={}; items.filter(x=>x.id!==it.id).forEach(x=>{ const {id,...v}=x; rest[id]=v; });
+        await store.setDocData('expenses/'+month,{items:rest},false);
+        expenseSheet(month); toast('삭제했어요');
+      });
+    });
+  },{full:true,title:'지출'});
+}
+function expenseAddSheet(month){
+  let cat=EXP_CATS[0];
+  openSheet(`
+    <h3>지출 추가</h3>
+    <div class="field"><label>분류</label><div class="chips" id="expCats">
+      ${EXP_CATS.map(c=>`<button type="button" class="chip" data-c="${c}" aria-pressed="${c===cat}">${c}</button>`).join('')}</div></div>
+    <div class="field"><label for="expAmt">금액 (원)</label><input id="expAmt" type="number" inputmode="numeric" min="0" step="100" placeholder="0"></div>
+    <div class="field"><label for="expDate">날짜</label><input id="expDate" type="date" value="${todayKey().slice(0,7)===month?todayKey():month+'-01'}"></div>
+    <div class="field"><label for="expMemo">메모 (선택)</label><input id="expMemo" type="text" maxlength="40" placeholder="예: 정기 검진"></div>
+    <button type="button" class="primary" id="expSave">저장</button>
+    <button type="button" class="secondary" id="expBack">목록으로</button>`,
+  sheet=>{
+    sheet.querySelectorAll('#expCats .chip').forEach(b=>b.onclick=()=>{
+      cat=b.dataset.c; sheet.querySelectorAll('#expCats .chip').forEach(c=>c.setAttribute('aria-pressed',String(c===b)));
+    });
+    $('expBack').onclick=()=>expenseSheet(month);
+    $('expSave').onclick=async()=>{
+      const amount=Math.round(Number($('expAmt').value)||0);
+      if(amount<=0){ $('expAmt').focus(); toast('금액을 입력해 주세요'); return; }
+      const dk=$('expDate').value||todayKey();
+      const id='x'+Date.now().toString(36);
+      await store.setDocData('expenses/'+dk.slice(0,7),{items:{[id]:{t:parseKey(dk).getTime(),amount,cat,memo:$('expMemo').value.trim(),by:S.me||'',dog:curDog().id}}},true);
+      expenseSheet(dk.slice(0,7)); toast(`${cat} ${wonFmt(amount)}원 기록했어요`);
+    };
+  });
+}
+
+/* ---------- 사진 일지 ---------- */
+const photoIndexPath = (ym)=>`photos/${ym}_${curDog().id}`;
+const photoFullPath = (dk)=>`photofull/${dk}_${curDog().id}`;
+async function diarySheet(ym){
+  const month=ym||todayKey().slice(0,7);
+  openSheet('<div class="empty">불러오는 중…</div>',null,{full:true,title:'사진 일지'});
+  const doc=await store.getDocData(photoIndexPath(month)) || {};
+  const days=doc.days||{};
+  const keys=Object.keys(days).sort().reverse();
+  const [y,m]=month.split('-').map(Number);
+  const prev=`${m===1?y-1:y}-${String(m===1?12:m-1).padStart(2,'0')}`;
+  const next=`${m===12?y+1:y}-${String(m===12?1:m+1).padStart(2,'0')}`;
+  openSheet(`
+    <div class="datebar">
+      <button class="navbtn" id="diPrev" type="button" aria-label="이전 달">‹</button>
+      <div class="d">${y}년 ${m}월<small>${curDog().name} · 사진 ${keys.length}장</small></div>
+      <button class="navbtn" id="diNext" type="button" aria-label="다음 달" ${next>todayKey().slice(0,7)?'disabled':''}>›</button>
+    </div>
+    <button type="button" class="secondary" id="diAdd">+ 오늘 사진 추가</button>
+    ${keys.length?`<div class="digrid">${keys.map(k=>`
+      <button type="button" class="dicell" data-day="${k}">
+        <img src="${days[k].thumb}" alt="${k}">
+        <span>${Number(k.slice(8,10))}일</span>
+      </button>`).join('')}</div>`:'<div class="empty">이 달 사진이 없어요</div>'}
+    <p class="note" style="margin:0">하루에 한 장씩 남겨 보세요. 사진은 가족 모두가 볼 수 있어요.</p>`,
+  sheet=>{
+    $('diPrev').onclick=()=>diarySheet(prev);
+    $('diNext').onclick=()=>{ if(next<=todayKey().slice(0,7)) diarySheet(next); };
+    $('diAdd').onclick=()=>addDiaryPhoto(month);
+    sheet.querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>openDiaryPhoto(b.dataset.day, days[b.dataset.day]));
+  },{full:true,title:'사진 일지'});
+}
+function addDiaryPhoto(month){
+  const inp=document.createElement('input'); inp.type='file'; inp.accept='image/*';
+  inp.onchange=async()=>{
+    const f=inp.files&&inp.files[0]; if(!f) return;
+    toast('사진을 준비하는 중…');
+    try{
+      const full=await shrinkImage(f);
+      const thumb=await shrinkImage(f,{max:200,quality:.6});
+      const dk=todayKey();
+      await store.setDocData(photoFullPath(dk),{data:full,by:S.me||'',t:Date.now()},false);
+      await store.setDocData(photoIndexPath(dk.slice(0,7)),{days:{[dk]:{thumb,by:S.me||'',t:Date.now()}}},true);
+      toast('사진을 올렸어요');
+      diarySheet(dk.slice(0,7));
+    }catch(e){ console.error(e); toast('이 사진은 쓸 수 없어요. 다른 사진을 골라 주세요'); }
+  };
+  inp.click();
+}
+async function openDiaryPhoto(dk, meta){
+  const lb=$('lightbox'); $('lbImg').src=meta.thumb; $('lbCap').textContent=`${dk.slice(5).replace('-','월 ')}일`; lb.hidden=false; lockScroll();
+  const full=await store.getDocData(photoFullPath(dk));
+  if(full&&full.data&&!lb.hidden) $('lbImg').src=full.data;
+  if(meta.by&&!lb.hidden) $('lbCap').textContent=`${dk.slice(5).replace('-','월 ')}일 · ${meta.by}`;
+}
+
 /* ---------- 강아지 사진 ---------- */
 function pickPhoto(){
   const inp=document.createElement('input'); inp.type='file'; inp.accept='image/*';
@@ -859,7 +1214,7 @@ function pickPhoto(){
     toast('사진을 준비하는 중…');
     try{
       const data=await shrinkImage(f);
-      S.photo=data; store.savePhoto(data); render();
+      S.photos={...S.photos,[curDog().id]:data}; store.savePhoto(S.photos); render();
       if($('sheetHost').innerHTML && $('photoPrev')) settingsSheet();
       toast('사진을 저장했어요');
     }catch(e){ console.error(e); toast('이 사진은 쓸 수 없어요. 다른 사진을 골라 주세요'); }
@@ -867,23 +1222,24 @@ function pickPhoto(){
   inp.click();
 }
 // 사진을 줄여 Firestore 문서 한 개(최대 1MB)에 담기. (Firebase Storage는 유료 요금제가 필요해서 사용하지 않음)
-async function shrinkImage(file){
+async function shrinkImage(file, opt){
   const url=URL.createObjectURL(file);
   try{
     const img=await new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=url; });
-    for(const [max,q] of [[1280,.82],[1024,.78],[800,.72],[640,.65]]){
+    const steps = opt&&opt.max ? [[opt.max,opt.quality||.7]] : [[1280,.82],[1024,.78],[800,.72],[640,.65]];
+    for(const [max,q] of steps){
       const r=Math.min(1,max/Math.max(img.naturalWidth,img.naturalHeight));
       const c=document.createElement('canvas'); c.width=Math.round(img.naturalWidth*r); c.height=Math.round(img.naturalHeight*r);
       c.getContext('2d').drawImage(img,0,0,c.width,c.height);
       const d=c.toDataURL('image/jpeg',q);
-      if(d.length<700000) return d;
+      if(d.length<700000 || (opt&&opt.max)) return d;
     }
     throw new Error('too large');
   } finally { URL.revokeObjectURL(url); }
 }
 function openLightbox(){
-  if(!S.photo) return;
-  const lb=$('lightbox'); $('lbImg').src=S.photo; $('lbCap').textContent=S.cfg.dogName; lb.hidden=false; lockScroll();
+  if(!curPhoto()) return;
+  const lb=$('lightbox'); $('lbImg').src=curPhoto(); $('lbCap').textContent=curDog().name; lb.hidden=false; lockScroll();
 }
 function closeLightbox(){ if($('lightbox').hidden) return; $('lightbox').hidden=true; if(!$('sheetHost').innerHTML) unlockScroll(); }
 
@@ -896,7 +1252,7 @@ function summaryText(){
     if(t.target>0){ (n>=t.target?done:left).push(`${t.name} ${n}/${t.target}`); }
     else if(n) extra.push(`${t.name} ${n}회`);
   });
-  const lines=[`[${S.cfg.dogName}] ${d.getMonth()+1}월 ${d.getDate()}일 케어`];
+  const lines=[`[${curDog().name}] ${d.getMonth()+1}월 ${d.getDate()}일 케어`];
   if(done.length) lines.push(`완료: ${done.join(', ')}`);
   if(left.length) lines.push(`남음: ${left.join(', ')}`);
   if(extra.length) lines.push(`기록: ${extra.join(', ')}`);
@@ -905,7 +1261,7 @@ function summaryText(){
 }
 async function shareToday(){
   const text=summaryText();
-  if(navigator.share){ try{ await navigator.share({title:`${S.cfg.dogName} 케어`,text}); return; }catch(e){ if(e&&e.name==='AbortError') return; } }
+  if(navigator.share){ try{ await navigator.share({title:`${curDog().name} 케어`,text}); return; }catch(e){ if(e&&e.name==='AbortError') return; } }
   try{ await navigator.clipboard.writeText(text); toast('요약을 복사했어요'); return; }catch(e){}
   openSheet(`<h3>오늘 요약</h3><div class="linkbox" style="white-space:pre-wrap">${esc(text)}</div>
     <button type="button" class="primary" id="sumClose">닫기</button>`, ()=>{ $('sumClose').onclick=closeSheet; });
@@ -916,6 +1272,11 @@ function menuSheet(){
     {ic:'star',  t:'기록 돌아보기', d:'달력 · 항목별 달성률 · 가족별 기록', fn:()=>statsSheet()},
     {ic:'heart', t:'강아지 정보',   d:`사진 · 품종 · 생일 · 몸무게`, fn:settingsSheet},
     {ic:'brush', t:'케어 목록 편집', d:'항목 추가 · 아이콘 · 목표 · 선택지', fn:itemsSheet},
+    {ic:'eye',   t:'사진 일지',      d:'하루 한 장씩 모으는 앨범', fn:()=>diarySheet()},
+    {ic:'food',  t:'사료 · 간식 재고', d:'남은 양과 소진 예상일', fn:suppliesSheet},
+    {ic:'scale', t:'지출 기록',      d:'사료 · 병원비 · 미용비 월별 정리', fn:()=>expenseSheet()},
+    {ic:'walk',  t:'가족 · 기록자',   d:'이름과 색 설정', fn:membersSheet},
+    {ic:'heart', t:'강아지 전환 · 추가', d:S.cfg.dogs.map(d=>d.name).join(' · '), fn:dogsSheet},
     {ic:'home',  t:'가족 초대',     d:'초대 링크 만들어 보내기', fn:inviteSheet},
     {ic:'eye',   t:'오늘 요약 공유', d:'가족 단톡방에 오늘 상황 보내기', fn:shareToday},
     {ic:'bell',  t:'알림', d:(notifyOn()?'켜짐':'꺼짐')+' — 가족이 기록하면 알려줘요', fn:()=>toggleNotify().then(menuSheet)}
@@ -972,7 +1333,7 @@ function inviteSheet(){
       catch(e){ const r=document.createRange(); r.selectNodeContents($('inviteLink')); const s=getSelection(); s.removeAllRanges(); s.addRange(r); toast('링크를 길게 눌러 복사해 주세요'); }
     };
     $('shareBtn').onclick=async()=>{
-      if(navigator.share){ try{ await navigator.share({title:`${S.cfg.dogName} 케어노트`,text:`${who?who+'님, ':''}${S.cfg.dogName} 케어 기록 같이 써요!`,url}); }catch(e){} }
+      if(navigator.share){ try{ await navigator.share({title:`${curDog().name} 케어노트`,text:`${who?who+'님, ':''}${curDog().name} 케어 기록 같이 써요!`,url}); }catch(e){} }
       else $('copyBtn').click();
     };
   });
@@ -1018,11 +1379,12 @@ $('prevDay').onclick=()=>goDay(-1);
 $('nextDay').onclick=()=>goDay(1);
 $('kakaoOpen').onclick=()=>{ location.href='kakaotalk://web/openExternal?url='+encodeURIComponent(location.href); };
 $('menuBtn').onclick=menuSheet;
+$('dogName').onclick=()=>{ if(S.fid && S.cfg.dogs.length>1) dogsSheet(); };
 $('tiles').addEventListener('click',e=>{
   if(e.target.closest('#doneToggle')){ S.showDone=!S.showDone; ls.set('dogcare.showDone',S.showDone?'1':'0'); render(); }
 });
 $('tiles').addEventListener('click',e=>{ if(e.target.closest('#noItems')) itemsSheet(); });
-$('faceBtn').onclick=()=>{ if(!S.fid) return; if(S.photo) openLightbox(); else pickPhoto(); };
+$('faceBtn').onclick=()=>{ if(!S.fid) return; if(curPhoto()) openLightbox(); else pickPhoto(); };
 $('lightbox').onclick=e=>{ if(e.target.id==='lbChange'){ closeLightbox(); pickPhoto(); return; } closeLightbox(); };
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeLightbox(); });
 $('profile').addEventListener('click',e=>{ if(e.target.closest('[data-open]')) settingsSheet(); });
@@ -1093,7 +1455,7 @@ async function start(after){
     if(seeded && before!==null && before!==after) notify('케어 목록이 바뀌었어요','가족 중 누군가 항목이나 목표를 수정했어요');
     render();
   });
-  store.subscribePhoto(d=>{ S.photo=d||''; render(); });
+  store.subscribePhoto(d=>{ S.photos=d&&typeof d==='object'?{...d}:{}; render(); });
   render();
   if(after) setTimeout(()=>{ if($('sheetHost').innerHTML) return; if(!S.me) nameSheet(after); else after(); },300);
   try{ navigator.storage && navigator.storage.persist && navigator.storage.persist(); }catch(e){}

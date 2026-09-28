@@ -315,7 +315,11 @@ select{width:100%;font:inherit;font-size:16px;color:var(--ink);background:var(--
 .slot-head{font-family:"Jua",sans-serif;font-weight:400;font-size:17px;margin:6px 0 0;display:flex;align-items:center;gap:8px;color:var(--muted)}
 .slot-head.now{color:var(--ink)}
 .slot-head span{font-family:"IBM Plex Sans KR",sans-serif;font-size:11px;font-weight:600;background:var(--ball);color:#1C2825;border-radius:999px;padding:2px 8px}
-.done-toggle{display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--surface-2);border:1px solid var(--line);border-radius:14px;padding:11px 14px;font-size:14px;color:var(--muted)}
+.done-toggle{display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--ok-soft);border:1px solid var(--ok);border-radius:14px;padding:12px 14px;font-size:14px;color:var(--ink);font-weight:500;margin-top:2px}
+.done-toggle::before{content:"";width:18px;height:18px;border-radius:50%;background:var(--done);flex:none;
+  -webkit-mask:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="11" fill="black" stroke="none"/><path d="M6 12.5l4.5 4.5L18 7.5" stroke="white"/></svg>') center/contain no-repeat;
+  mask:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="11" fill="black" stroke="none"/><path d="M6 12.5l4.5 4.5L18 7.5" stroke="white"/></svg>') center/contain no-repeat}
+.done-toggle span{flex:1}
 .done-toggle b{color:var(--accent);font-weight:600;font-size:13px}
 
 /* ---- v10: 기록자 색 ---- */
@@ -325,3 +329,20 @@ select{width:100%;font:inherit;font-size:16px;color:var(--ink);background:var(--
 /* ---- v10: 되돌리기 토스트 ---- */
 .toast{display:flex;align-items:center;gap:12px}
 .toast button{color:var(--ball);font-weight:600;font-size:14px;padding:2px 4px}
+
+/* ---- v11: 가족 · 강아지 · 재고 · 지출 · 사진 일지 ---- */
+.who-chip{width:18px;height:18px;border-radius:50%;flex:none}
+.colorgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(44px,1fr));gap:8px}
+.colorgrid button{height:44px;border-radius:12px;border:2px solid transparent}
+.colorgrid button[aria-pressed="true"]{border-color:var(--ink);box-shadow:0 0 0 2px var(--surface) inset}
+.dog-av{width:32px;height:32px;border-radius:50%;overflow:hidden;background:var(--ball-soft);display:grid;place-items:center;color:var(--accent);flex:none}
+.dog-av img{width:100%;height:100%;object-fit:cover}
+#dogName.switchable{cursor:pointer;display:inline-flex;align-items:center;gap:4px}
+#dogName.switchable::after{content:"▾";font-size:14px;color:var(--muted)}
+.bar-track i.warnbar{background:var(--warn)}
+.exp-row{grid-template-columns:44px 1fr auto auto}
+.exp-amt{font-weight:600}
+.digrid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.dicell{position:relative;aspect-ratio:1;border-radius:12px;overflow:hidden;background:var(--surface-2)}
+.dicell img{width:100%;height:100%;object-fit:cover;display:block}
+.dicell span{position:absolute;left:6px;bottom:6px;font-size:11px;color:#fff;background:rgba(0,0,0,.45);border-radius:999px;padding:2px 7px}
