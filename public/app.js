@@ -134,7 +134,7 @@ const ls = {
   set(k,v){try{localStorage.setItem(k,v)}catch(e){}}
 };
 
-const S = {days:{}, cfg:null, photos:{}, walk:null, dog:ls.get('dogcare.dog')||'main', showDone:ls.get('dogcare.showDone')==='1', view:todayKey(), me:ls.get('dogcare.me')||'', status:'connecting', fid:null};
+const S = {days:{}, cfg:null, photos:{}, walk:null, tab:'home', dashRange:30, dog:ls.get('dogcare.dog')||'main', showDone:ls.get('dogcare.showDone')==='1', view:todayKey(), me:ls.get('dogcare.me')||'', status:'connecting', fid:null};
 let store = null;
 setCfg({});
 
@@ -277,8 +277,14 @@ function render(){
   $('onboard').hidden=!onboarding;
   $('main').hidden=onboarding;
   $('menuBtn').hidden=onboarding;
-  if(onboarding){ $('dogName').textContent='멍멍 케어노트'; return; }
+  if(onboarding){ $('dogName').textContent='멍멍 케어노트'; $('tabbar').hidden=true; return; }
 
+  $('tabbar').hidden=false;
+  $('tabHome').setAttribute('aria-selected',String(S.tab==='home'));
+  $('tabDash').setAttribute('aria-selected',String(S.tab==='dash'));
+  $('homeView').hidden=S.tab!=='home';
+  $('dashView').hidden=S.tab!=='dash';
+  if(S.tab==='dash'){ renderDash(); }
   const cfg=S.cfg, isToday=S.view===todayKey();
   $('dogName').textContent=curDog().name;
   $('dogName').className=S.cfg.dogs.length>1?'switchable':'';
@@ -314,13 +320,19 @@ function render(){
 
   const tileHtml=t=>{
     const n=count(t.k), goal=t.target, done=goal>0&&n>=goal, last=lastOf(t.k);
-    let lastTxt='아직 기록 없음', warn=false;
+    let lastTxt='아직 기록 없음', warn=false, danger=false;
     if(last){
       const hrs=(Date.now()-last.t)/36e5;
       const when=keyOf(new Date(last.t))===todayKey()?hm(last.t):hrs<48?`어제 ${hm(last.t)}`:`${Math.floor(hrs/24)}일 전`;
       lastTxt=`마지막 ${when}${last.by?` · ${esc(last.by)}`:''}`;
-      if(t.cycle){ const d=dueInfo(t); if(d&&!d.never){ lastTxt=d.days<0?`${-d.days}일 지났어요`:d.days===0?'오늘 할 차례예요':`다음 D-${d.days} · ${d.due.slice(5).replace('-','/')}`; if(d.days<=0) warn=true; } }
-      if(t.stale&&hrs>=t.stale){warn=true;lastTxt=`마지막 기록 후 ${Math.floor(hrs)}시간 지났어요`;}
+      if(t.gps && weekWalkMiss(t)){ danger=true; warn=true; lastTxt=lastTxt+' · 이번 주 산책이 없어요'; }
+    if(t.cycle){ const d=dueInfo(t); if(d&&!d.never){ lastTxt=d.days<0?`${-d.days}일 지났어요`:d.days===0?'오늘 할 차례예요':`다음 D-${d.days} · ${d.due.slice(5).replace('-','/')}`; if(d.days<=0) warn=true; } }
+      if(t.stale&&hrs>=t.stale){
+        warn=true;
+        const lv2=hrs>=t.stale*2;
+        if(lv2) danger=true;
+        lastTxt=staleMsg(t,lv2,hrs);
+      }
     }
     const partial=goal>1&&n>0&&n<goal;
     const logged=!goal&&n>0;
@@ -328,32 +340,25 @@ function render(){
     const streak=t.streak?streakOf(t.k):0;
     const badge=streak>=2?`<span class="badge">${streak}일 연속</span>`:'';
     const cnt=`<span class="cnt num ${done?'done':''}">${n}${goal?`<small style="font-size:14px">/${goal}</small>`:''}</span>`;
-    return `<button class="tile ${done?'complete':''} ${partial?'partial':''} ${logged?'logged':''} ${warn&&isToday?'alert':''}" type="button" data-type="${t.k}">
+    return `<button class="tile ${done?'complete':''} ${partial?'partial':''} ${logged?'logged':''} ${warn&&isToday?(danger?'danger':'alert'):''}" type="button" data-type="${t.k}">
       <div class="top"><span class="ic">${icon(t.icon)}</span>${partial?`<span class="partmark num">${goal-n}회 남음</span>`:''}${logged?`<span class="logmark num">${n}회 기록</span>`:''}${done?'<span class="donemark"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>완료</span>':(badge||cnt)}</div>
       <div class="name">${esc(t.name)}${(badge||done)?` ${cnt.replace('font-size:14px','font-size:12px')}`:''}</div>
       ${dots}
-      <div class="last ${warn&&isToday?'warn':''}">${lastTxt}</div>
+      <div class="last ${warn&&isToday?(danger?'danger-txt':'warn'):''}">${lastTxt}</div>
     </button>`;
   };
-  const isDone=t=>t.target>0&&count(t.k)>=t.target;
-  const pending=items.filter(t=>!isDone(t)), finished=items.filter(isDone);
   const grouped=items.some(t=>t.when);
   let html='';
   if(grouped){
     const cur=nowSlot();
     SLOTS.forEach(sl=>{
-      const g=pending.filter(t=>(t.when||'')===sl.k);
+      const g=items.filter(t=>(t.when||'')===sl.k);
       if(!g.length) return;
       html+=`<h3 class="slot-head${isToday&&sl.k===cur?' now':''}">${sl.name}${isToday&&sl.k===cur?'<span>지금</span>':''}</h3>
         <div class="tiles-grid">${g.map(tileHtml).join('')}</div>`;
     });
   } else {
-    html+=`<div class="tiles-grid">${pending.map(tileHtml).join('')}</div>`;
-  }
-  if(finished.length){
-    html+=`<button type="button" class="done-toggle" id="doneToggle" aria-expanded="${S.showDone}">
-      <span>완료한 케어 ${finished.length}개</span><b>${S.showDone?'접기':'보기'}</b></button>
-      ${S.showDone?`<div class="tiles-grid">${finished.map(tileHtml).join('')}</div>`:''}`;
+    html+=`<div class="tiles-grid">${items.map(tileHtml).join('')}</div>`;
   }
   $('tiles').innerHTML=html;
 
@@ -914,6 +919,73 @@ function initDragSort(list, onDone){
 }
 
 
+
+/* ---------- 대시보드: 가족별 집계 ---------- */
+function renderDash(){
+  const days=S.dashRange;
+  const keys=Array.from({length:days},(_,i)=>shiftKey(todayKey(),-i));
+  const items=activeItems().filter(t=>!t.gps);       // 산책(GPS) 항목은 제외
+  const all=[]; keys.forEach(k=>entriesOf(k).forEach(e=>all.push(e)));
+  const people=[...new Set(all.map(e=>e.by).filter(Boolean))];
+  const total=all.length;
+  const byWho={}; people.forEach(n=>byWho[n]=all.filter(e=>e.by===n).length);
+  const ranked=people.sort((a,b)=>byWho[b]-byWho[a]);
+  const segBar=(rows,sum)=>`<span class="seg">${rows.map(r=>`<i style="width:${sum?r.n/sum*100:0}%;background:${whoColor(r.name)}" title="${esc(r.name)} ${r.n}"></i>`).join('')}</span>`;
+  const legend=ranked.map(n=>`<span class="who"><i style="background:${whoColor(n)}"></i>${esc(n)} ${total?Math.round(byWho[n]/total*100):0}%</span>`).join('');
+
+  const rows=items.map(t=>{
+    const es=all.filter(e=>e.type===t.k);
+    const per=ranked.map(n=>({name:n,n:es.filter(e=>e.by===n).length})).filter(r=>r.n);
+    const top=per[0];
+    return {t, sum:es.length, per, top};
+  }).filter(r=>r.sum);
+
+  $('dashView').innerHTML=`
+    <div class="chips" id="dashRange">${[7,30,90].map(n=>`<button type="button" class="chip" aria-pressed="${n===days}" data-r="${n}">최근 ${n}일</button>`).join('')}</div>
+    <div class="statgrid">
+      <div class="stat"><b class="num">${total}</b><span>전체 기록</span></div>
+      <div class="stat"><b class="num">${people.length}</b><span>참여한 가족</span></div>
+      <div class="stat"><b class="num">${ranked.length?esc(ranked[0]):'—'}</b><span>가장 많이 한 사람</span></div>
+    </div>
+    ${total?`<div class="field"><label>가족별 전체 비율</label>${segBar(ranked.map(n=>({name:n,n:byWho[n]})),total)}
+      <div class="legend">${legend}</div></div>`:''}
+    <div class="field"><label>항목별 · 누가 했나요</label>
+      ${rows.length?`<div class="dashrows">${rows.map(r=>`
+        <div class="dashrow">
+          <div class="dashrow-top"><span class="ic">${icon(r.t.icon,18)}</span><b>${esc(r.t.name)}</b>
+            <span class="num">${r.sum}회</span></div>
+          ${segBar(r.per,r.sum)}
+          <div class="legend">${r.per.map(x=>`<span class="who"><i style="background:${whoColor(x.name)}"></i>${esc(x.name)} ${Math.round(x.n/r.sum*100)}%</span>`).join('')}</div>
+        </div>`).join('')}</div>`:'<div class="empty">아직 집계할 기록이 없어요</div>'}
+    </div>
+    <p class="note" style="margin:0">산책은 집계에서 빼고 보여줘요.</p>`;
+  $('dashRange').querySelectorAll('.chip').forEach(b=>b.onclick=()=>{ S.dashRange=+b.dataset.r; renderDash(); });
+}
+
+/* ---------- 경과 안내 문구 · 주간 산책 점검 ---------- */
+function staleMsg(t,lv2,hrs){
+  if(t.k==='water') return lv2?'물이 있는지 확인해 주세요':'물을 교체해 주세요';
+  if(t.msg2&&lv2) return t.msg2;
+  if(t.msg1&&!lv2) return t.msg1;
+  return lv2?`${t.name} 한 지 ${Math.floor(hrs/24)||Math.floor(hrs)}${hrs>=48?'일':'시간'}이나 됐어요`:`${t.name} 할 때가 됐어요`;
+}
+// 주 시작: 월요일. 단 매월 1일에 새 주가 시작돼요. 마감: 그 주 일요일 밤 10시.
+function weekWindow(d){
+  const day=new Date(d.getFullYear(),d.getMonth(),d.getDate());
+  const dow=(day.getDay()+6)%7;                      // 월=0
+  let start=new Date(day); start.setDate(day.getDate()-dow);
+  const first=new Date(day.getFullYear(),day.getMonth(),1);
+  if(start<first) start=first;                       // 달이 바뀌면 1일부터 새 주
+  const end=new Date(start); end.setDate(start.getDate()+(6-((start.getDay()+6)%7)));
+  end.setHours(22,0,0,0);                            // 일요일 밤 10시 마감
+  return {start:start.getTime(), end:end.getTime()};
+}
+function weekWalkMiss(t){
+  const now=new Date(), w=weekWindow(now);
+  if(Date.now()<w.end) return false;                 // 아직 이번 주 마감 전
+  const last=lastOf(t.k);
+  return !last || last.t < w.start;                  // 마감이 지났는데 이번 주 기록이 없음
+}
 
 /* ---------- 산책 동선 기록 ---------- */
 const R_EARTH=6371000;
@@ -1517,10 +1589,10 @@ $('prevDay').onclick=()=>goDay(-1);
 $('nextDay').onclick=()=>goDay(1);
 $('kakaoOpen').onclick=()=>{ location.href='kakaotalk://web/openExternal?url='+encodeURIComponent(location.href); };
 $('menuBtn').onclick=menuSheet;
+$('tabHome').onclick=()=>{ S.tab='home'; render(); };
+$('tabDash').onclick=()=>{ S.tab='dash'; render(); };
 $('dogName').onclick=()=>{ if(S.fid && S.cfg.dogs.length>1) dogsSheet(); };
-$('tiles').addEventListener('click',e=>{
-  if(e.target.closest('#doneToggle')){ S.showDone=!S.showDone; ls.set('dogcare.showDone',S.showDone?'1':'0'); render(); }
-});
+
 $('tiles').addEventListener('click',e=>{ if(e.target.closest('#noItems')) itemsSheet(); });
 $('faceBtn').onclick=()=>{ if(!S.fid) return; if(curPhoto()) openLightbox(); else pickPhoto(); };
 $('lightbox').onclick=e=>{ if(e.target.id==='lbChange'){ closeLightbox(); pickPhoto(); return; } closeLightbox(); };

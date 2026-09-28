@@ -39,6 +39,10 @@
     <div id="walkbar" class="walkbar" hidden></div>
   </header>
 
+  <div class="tabbar" id="tabbar" hidden role="tablist">
+    <button type="button" id="tabHome" role="tab" aria-selected="true">홈</button>
+    <button type="button" id="tabDash" role="tab" aria-selected="false">대시보드</button>
+  </div>
   <div id="banner" class="banner" hidden></div>
   <div id="kakaoTip" class="kakao-tip" hidden>
     <span>카카오톡 안에서 열면 매번 새로 시작될 수 있어요. 기본 브라우저로 열고 <b>홈 화면에 추가</b>해 두면 편해요.</span>
@@ -57,6 +61,8 @@
 
   <!-- 메인 화면 -->
   <div id="main" hidden style="display:contents">
+    <div id="dashView" class="dash" hidden></div>
+    <div id="homeView" style="display:contents">
     <div id="profile"></div>
     <div class="datebar">
       <button class="navbtn" id="prevDay" type="button" aria-label="이전 날">
@@ -77,6 +83,7 @@
       </section>
     </div>
     <p class="note swipe-hint">화면을 좌우로 밀면 날짜가 바뀌어요 · 카드를 길게 누르면 바로 기록돼요</p>
+    </div>
     <p class="note" id="syncNote">연결 중…</p>
   </div>
 </div>

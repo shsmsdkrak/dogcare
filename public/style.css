@@ -363,3 +363,21 @@ select{width:100%;font:inherit;font-size:16px;color:var(--ink);background:var(--
 .trk-tag{display:inline-block;margin-left:6px;font-size:11px;font-weight:600;color:var(--accent);background:var(--accent-soft);border-radius:999px;padding:2px 8px}
 .walkmap{height:min(58vh,440px);border-radius:16px;overflow:hidden;background:var(--surface-2)}
 .walkmap .leaflet-container{height:100%;width:100%;background:var(--surface-2)}
+
+/* ---- v13: 탭 · 대시보드 · 경고 ---- */
+.tabbar{display:flex;gap:4px;background:var(--surface-2);border:1px solid var(--line);border-radius:999px;padding:4px}
+.tabbar button{flex:1;border-radius:999px;padding:9px;font-size:14px;font-weight:600;color:var(--muted)}
+.tabbar button[aria-selected="true"]{background:var(--surface);color:var(--ink);box-shadow:var(--shadow)}
+.dash{display:flex;flex-direction:column;gap:14px}
+.seg{display:flex;height:12px;border-radius:999px;overflow:hidden;background:var(--surface-2)}
+.seg i{display:block;height:100%}
+.legend{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px}
+.dashrows{display:flex;flex-direction:column;gap:14px}
+.dashrow{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px}
+.dashrow-top{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.dashrow-top .ic{color:var(--accent);display:grid;place-items:center}
+.dashrow-top b{flex:1;font-weight:600}
+.dashrow-top .num{font-size:13px;color:var(--muted)}
+.tile.danger{border:2px solid var(--bad);background:color-mix(in srgb,var(--bad) 12%,var(--surface));padding:11px}
+.tile.danger .ic{background:var(--surface);color:var(--bad)}
+.last.danger-txt{color:var(--bad);font-weight:600}
