@@ -56,6 +56,7 @@ function normItem(i){
     icon:ICONS[i.icon]?i.icon:'star', target:Math.max(0,Math.min(10,parseInt(i.target)||0)),
     options:Array.isArray(i.options)?i.options.map(o=>String(o).trim().slice(0,12)).filter(Boolean).slice(0,8):[],
     stale:Math.max(0,Math.min(240,parseInt(i.stale)||0)), streak:!!i.streak, hidden:!!i.hidden,
+    when:['am','noon','pm'].includes(i.when)?i.when:'',
     pick:(i.pick==='chip'||i.pick==='select')?i.pick:'',
     cycle:Math.max(0,Math.min(400,parseInt(i.cycle)||0)) };
 }
@@ -108,7 +109,7 @@ const ls = {
   set(k,v){try{localStorage.setItem(k,v)}catch(e){}}
 };
 
-const S = {days:{}, cfg:null, photo:'', view:todayKey(), me:ls.get('dogcare.me')||'', status:'connecting', fid:null};
+const S = {days:{}, cfg:null, photo:'', showDone:ls.get('dogcare.showDone')==='1', view:todayKey(), me:ls.get('dogcare.me')||'', status:'connecting', fid:null};
 let store = null;
 setCfg({});
 
@@ -215,6 +216,17 @@ function knownNames(){
   for(const k of Object.keys(S.days)) for(const e of entriesOf(k)) if(e.by) s.add(e.by);
   return [...s].slice(0,12);
 }
+const SLOTS=[{k:'am',name:'아침'},{k:'noon',name:'낮'},{k:'pm',name:'저녁'},{k:'',name:'아무 때나'}];
+const nowSlot = ()=>{ const h=new Date().getHours(); return h<11?'am':h<17?'noon':'pm'; };
+const slotName = k=>(SLOTS.find(x=>x.k===k)||SLOTS[3]).name;
+// 기록자별 색 (이름에서 고정적으로 뽑아요)
+const WHO_COLORS=['#0E6B5C','#C2761B','#2F6FB5','#9B4DA8','#1F8A4C','#C0453B','#7A6B1E','#3E7F8E'];
+function whoColor(name){
+  const n=String(name||''); let h=0;
+  for(let i=0;i<n.length;i++) h=(h*31+n.charCodeAt(i))>>>0;
+  return WHO_COLORS[h%WHO_COLORS.length];
+}
+const whoDot = name=>name?`<span class="who"><i style="background:${whoColor(name)}"></i>${esc(name)}</span>`:'';
 const newId=()=>'e'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 
 function setStatus(s){ S.status=s; render(); }
@@ -258,7 +270,7 @@ function render(){
     <div><div class="t">${need===0?'목표를 설정해 보세요':left.length===0?(isToday?'오늘 할 일 모두 완료!':'이 날 할 일 모두 완료'):`남은 케어 ${left.length}가지`}</div>
     <div class="s">${left.length?esc(left.join(' · ')):`${got}/${need} 완료`}</div></div>`;
 
-  $('tiles').innerHTML=items.map(t=>{
+  const tileHtml=t=>{
     const n=count(t.k), goal=t.target, done=goal>0&&n>=goal, last=lastOf(t.k);
     let lastTxt='아직 기록 없음', warn=false;
     if(last){
@@ -280,7 +292,28 @@ function render(){
       ${dots}
       <div class="last ${warn&&isToday?'warn':''}">${lastTxt}</div>
     </button>`;
-  }).join('');
+  };
+  const isDone=t=>t.target>0&&count(t.k)>=t.target;
+  const pending=items.filter(t=>!isDone(t)), finished=items.filter(isDone);
+  const grouped=items.some(t=>t.when);
+  let html='';
+  if(grouped){
+    const cur=nowSlot();
+    SLOTS.forEach(sl=>{
+      const g=pending.filter(t=>(t.when||'')===sl.k);
+      if(!g.length) return;
+      html+=`<h3 class="slot-head${isToday&&sl.k===cur?' now':''}">${sl.name}${isToday&&sl.k===cur?'<span>지금</span>':''}</h3>
+        <div class="tiles-grid">${g.map(tileHtml).join('')}</div>`;
+    });
+  } else {
+    html+=`<div class="tiles-grid">${pending.map(tileHtml).join('')}</div>`;
+  }
+  if(finished.length){
+    html+=`<button type="button" class="done-toggle" id="doneToggle" aria-expanded="${S.showDone}">
+      <span>완료한 케어 ${finished.length}개</span><b>${S.showDone?'접기':'보기'}</b></button>
+      ${S.showDone?`<div class="tiles-grid">${finished.map(tileHtml).join('')}</div>`:''}`;
+  }
+  $('tiles').innerHTML=html;
 
   const up=upcoming();
   $('upcoming').innerHTML=up.length?`<div class="up-strip">${up.map(d=>`
@@ -293,7 +326,7 @@ function render(){
     <div class="row" data-edit-entry="${e.id}">
       <span class="time num">${hm(e.t)}</span>
       <span class="ic">${icon(T[e.type].icon,20)}</span>
-      <span class="what"><b>${esc(T[e.type].name)}</b>${e.status?` <span>· ${esc(e.status)}</span>`:''}${e.note?` <span>· ${esc(e.note)}</span>`:''}<br><span>${esc(e.by||'')}</span></span>
+      <span class="what"><b>${esc(T[e.type].name)}</b>${e.status?` <span>· ${esc(e.status)}</span>`:''}${e.note?` <span>· ${esc(e.note)}</span>`:''}<br>${whoDot(e.by)}</span>
       <button class="del" type="button" data-del="${e.id}" aria-label="${esc(T[e.type].name)} 기록 삭제">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>`).join(''):`<div class="empty">${isToday?'위 카드를 눌러 첫 기록을 남겨 보세요':'이 날은 기록이 없어요'}</div>`;
@@ -400,8 +433,9 @@ function logSheet(type){
         if(status) entry.status=status;
       }
       const note=$('logNote').value.trim(); if(note) entry.note=note;
-      store.addEntry(S.view,newId(),entry);
-      closeSheet(); toast(`${t.name} 기록했어요`);
+      const id=newId(), day=S.view;
+      store.addEntry(day,id,entry);
+      closeSheet(); toast(`${t.name} 기록했어요`, ()=>{ store.removeEntry(day,id); toast('되돌렸어요'); });
     };
   });
 }
@@ -516,9 +550,10 @@ function quickLog(type){
   const t=T[type]; if(!t) return;
   if(!S.me){ nameSheet(()=>quickLog(type)); return; }
   const d=S.view===todayKey()?new Date():(()=>{const x=parseKey(S.view);x.setHours(9,0,0,0);return x})();
-  store.addEntry(S.view,newId(),{type,t:d.getTime(),by:S.me});
+  const id=newId(), day=S.view;
+  store.addEntry(day,id,{type,t:d.getTime(),by:S.me});
   if(navigator.vibrate) try{navigator.vibrate(12)}catch(e){}
-  toast(`${t.name} 바로 기록했어요`);
+  toast(`${t.name} 바로 기록했어요`, ()=>{ store.removeEntry(day,id); toast('되돌렸어요'); });
 }
 
 /* ---------- 기록 수정 ---------- */
@@ -552,7 +587,11 @@ function entryEditSheet(id){
       const note=$('eeNote').value.trim(); if(note) next.note=note;
       store.updateEntry(S.view,id,next); closeSheet(); toast('기록을 고쳤어요');
     };
-    $('eeDel').onclick=()=>{ store.removeEntry(S.view,id); closeSheet(); toast('기록을 지웠어요'); };
+    $('eeDel').onclick=()=>{
+      const day=S.view, backup={type:e.type,t:e.t,by:e.by,status:e.status,note:e.note};
+      store.removeEntry(day,id); closeSheet();
+      toast('기록을 지웠어요', ()=>{ store.updateEntry(day,id,backup); toast('되돌렸어요'); });
+    };
   });
 }
 
@@ -642,7 +681,7 @@ function itemsSheet(){
       <button type="button" class="irow-main" data-edit="${esc(i.k)}">
         <span class="ic">${icon(i.icon,20)}</span>
         <span class="irow-name">${esc(i.name)}</span>
-        <span class="irow-goal">${i.target?`하루 ${i.target}회`:'기록만'}${i.cycle?` · ${i.cycle}일 주기`:''}</span>
+        <span class="irow-goal">${i.target?`하루 ${i.target}회`:'기록만'}${i.cycle?` · ${i.cycle}일 주기`:''}${i.when?` · ${slotName(i.when)}`:''}</span>
       </button>
       <button type="button" class="irow-del" data-remove="${esc(i.k)}" aria-label="${esc(i.name)} 삭제">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13"/></svg>
@@ -689,7 +728,7 @@ function itemDeleteSheet(k){
 function itemEditSheet(k){
   const isNew=!k;
   const it=isNew?normItem({k:'c'+Date.now().toString(36),name:'',icon:'star',target:1}):{...T[k]};
-  let ic=it.icon, tg=it.target, streak=it.streak, opts=[...it.options], pick=it.pick;
+  let ic=it.icon, tg=it.target, streak=it.streak, opts=[...it.options], pick=it.pick, when=it.when||'';
   openSheet(`
     <h3><span style="color:var(--accent)" id="ieIcon">${icon(ic,26)}</span>${isNew?'새 항목':'항목 편집'}</h3>
     <div class="field"><label for="ieName">이름</label><input id="ieName" type="text" maxlength="12" value="${esc(it.name)}" placeholder="예: 목욕, 발톱 깎기"></div>
@@ -700,6 +739,9 @@ function itemEditSheet(k){
       <div class="optlist" id="ieOptList"></div>
       <button type="button" class="secondary" id="ieOptAdd">+ 선택지 추가</button>
     </div>
+    <div class="field"><label>시간대</label><div class="chips" id="ieWhen">
+      ${SLOTS.map(sl=>`<button type="button" class="chip" data-w="${sl.k}" aria-pressed="false">${sl.name}</button>`).join('')}
+    </div></div>
     <div class="field" id="iePickWrap"><label>선택 방식</label><div class="chips" id="iePick">
       <button type="button" class="chip" data-p="chip">버튼</button>
       <button type="button" class="chip" data-p="select">드롭다운</button>
@@ -735,13 +777,16 @@ function itemEditSheet(k){
     sheet.querySelectorAll('#iePick .chip').forEach(c=>c.onclick=()=>{ pick=c.dataset.p; drawOpts(); });
     sheet.querySelectorAll('#ieIcons button').forEach(b=>b.onclick=()=>{ ic=b.dataset.ic;
       sheet.querySelectorAll('#ieIcons button').forEach(x=>x.setAttribute('aria-pressed',String(x===b))); $('ieIcon').innerHTML=icon(ic,26); });
+    const drawWhen=()=>sheet.querySelectorAll('#ieWhen .chip').forEach(c=>c.setAttribute('aria-pressed',String(c.dataset.w===when)));
+    drawWhen();
+    sheet.querySelectorAll('#ieWhen .chip').forEach(c=>c.onclick=()=>{ when=c.dataset.w; drawWhen(); });
     $('ieMinus').onclick=()=>{ tg=Math.max(0,tg-1); $('ieTarget').textContent=tg; };
     $('iePlus').onclick=()=>{ tg=Math.min(10,tg+1); $('ieTarget').textContent=tg; };
     $('ieStreak').onclick=()=>{ streak=!streak; $('ieStreak').setAttribute('aria-pressed',String(streak)); };
     $('ieBack').onclick=itemsSheet;
     $('ieSave').onclick=()=>{
       const name=$('ieName').value.trim(); if(!name){ $('ieName').focus(); toast('이름을 입력해 주세요'); return; }
-      const next=normItem({...it, name, icon:ic, target:tg, streak, options:opts, pick, stale:$('ieStale').value, cycle:$('ieCycle').value});
+      const next=normItem({...it, name, icon:ic, target:tg, streak, options:opts, pick, when, stale:$('ieStale').value, cycle:$('ieCycle').value});
       const items=S.cfg.items.map(i=>({...i}));
       const at=items.findIndex(i=>i.k===next.k); if(at>=0) items[at]=next; else items.push(next);
       saveItems(items); toast(isNew?`${name} 항목을 추가했어요`:'저장했어요'); itemsSheet();
@@ -842,12 +887,37 @@ function openLightbox(){
 }
 function closeLightbox(){ if($('lightbox').hidden) return; $('lightbox').hidden=true; if(!$('sheetHost').innerHTML) unlockScroll(); }
 
+function summaryText(){
+  const list=entriesOf(S.view), count=k=>list.filter(e=>e.type===k).length;
+  const items=activeItems(), d=parseKey(S.view);
+  const done=[], left=[], extra=[];
+  items.forEach(t=>{
+    const n=count(t.k);
+    if(t.target>0){ (n>=t.target?done:left).push(`${t.name} ${n}/${t.target}`); }
+    else if(n) extra.push(`${t.name} ${n}회`);
+  });
+  const lines=[`[${S.cfg.dogName}] ${d.getMonth()+1}월 ${d.getDate()}일 케어`];
+  if(done.length) lines.push(`완료: ${done.join(', ')}`);
+  if(left.length) lines.push(`남음: ${left.join(', ')}`);
+  if(extra.length) lines.push(`기록: ${extra.join(', ')}`);
+  if(!done.length&&!left.length&&!extra.length) lines.push('아직 기록이 없어요');
+  return lines.join('\n');
+}
+async function shareToday(){
+  const text=summaryText();
+  if(navigator.share){ try{ await navigator.share({title:`${S.cfg.dogName} 케어`,text}); return; }catch(e){ if(e&&e.name==='AbortError') return; } }
+  try{ await navigator.clipboard.writeText(text); toast('요약을 복사했어요'); return; }catch(e){}
+  openSheet(`<h3>오늘 요약</h3><div class="linkbox" style="white-space:pre-wrap">${esc(text)}</div>
+    <button type="button" class="primary" id="sumClose">닫기</button>`, ()=>{ $('sumClose').onclick=closeSheet; });
+}
+
 function menuSheet(){
   const rows=[
     {ic:'star',  t:'기록 돌아보기', d:'달력 · 항목별 달성률 · 가족별 기록', fn:()=>statsSheet()},
     {ic:'heart', t:'강아지 정보',   d:`사진 · 품종 · 생일 · 몸무게`, fn:settingsSheet},
     {ic:'brush', t:'케어 목록 편집', d:'항목 추가 · 아이콘 · 목표 · 선택지', fn:itemsSheet},
     {ic:'home',  t:'가족 초대',     d:'초대 링크 만들어 보내기', fn:inviteSheet},
+    {ic:'eye',   t:'오늘 요약 공유', d:'가족 단톡방에 오늘 상황 보내기', fn:shareToday},
     {ic:'bell',  t:'알림', d:(notifyOn()?'켜짐':'꺼짐')+' — 가족이 기록하면 알려줘요', fn:()=>toggleNotify().then(menuSheet)}
   ];
   openSheet(`
@@ -909,9 +979,10 @@ function inviteSheet(){
 }
 
 let toastTimer;
-function toast(msg){
-  $('toastHost').innerHTML=`<div class="toast" role="status">${esc(msg)}</div>`;
-  clearTimeout(toastTimer); toastTimer=setTimeout(()=>$('toastHost').innerHTML='',2200);
+function toast(msg, undo){
+  $('toastHost').innerHTML=`<div class="toast" role="status"><span>${esc(msg)}</span>${undo?'<button type="button" id="toastUndo">취소</button>':''}</div>`;
+  if(undo) $('toastUndo').onclick=()=>{ $('toastHost').innerHTML=''; clearTimeout(toastTimer); undo(); };
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>$('toastHost').innerHTML='', undo?5000:2200);
 }
 
 /* ================= 이벤트 ================= */
@@ -938,13 +1009,18 @@ $('timeline').addEventListener('click',e=>{
   const en=entriesOf(S.view).find(x=>x.id===b.dataset.del);
   const nm=en&&T[en.type]?T[en.type].name:'기록';
   confirmSheet(`${nm} 기록을 삭제할까요?`, en?`${hm(en.t)}${en.status?` · ${en.status}`:''}${en.by?` · ${en.by}`:''}`:'', ()=>{
-    store.removeEntry(S.view,b.dataset.del); toast('기록을 지웠어요');
+    const day=S.view, id=b.dataset.del, backup=en&&{type:en.type,t:en.t,by:en.by,status:en.status,note:en.note};
+    store.removeEntry(day,id);
+    toast('기록을 지웠어요', backup?()=>{ store.updateEntry(day,id,backup); toast('되돌렸어요'); }:null);
   });
 });
 $('prevDay').onclick=()=>goDay(-1);
 $('nextDay').onclick=()=>goDay(1);
 $('kakaoOpen').onclick=()=>{ location.href='kakaotalk://web/openExternal?url='+encodeURIComponent(location.href); };
 $('menuBtn').onclick=menuSheet;
+$('tiles').addEventListener('click',e=>{
+  if(e.target.closest('#doneToggle')){ S.showDone=!S.showDone; ls.set('dogcare.showDone',S.showDone?'1':'0'); render(); }
+});
 $('tiles').addEventListener('click',e=>{ if(e.target.closest('#noItems')) itemsSheet(); });
 $('faceBtn').onclick=()=>{ if(!S.fid) return; if(S.photo) openLightbox(); else pickPhoto(); };
 $('lightbox').onclick=e=>{ if(e.target.id==='lbChange'){ closeLightbox(); pickPhoto(); return; } closeLightbox(); };

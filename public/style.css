@@ -307,3 +307,21 @@ select{width:100%;font:inherit;font-size:16px;color:var(--ink);background:var(--
   border-bottom:1px solid transparent}
 #appHeader.stuck{border-bottom-color:var(--line);box-shadow:0 2px 10px rgba(20,40,35,.05)}
 .wrap{padding-top:0}
+
+/* ---- v10: 시간대 그룹 · 완료 접기 ---- */
+#tiles{display:flex;flex-direction:column;gap:10px}
+.tiles-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.tiles-grid .tile:last-child:nth-child(odd){grid-column:1/-1;min-height:0}
+.slot-head{font-family:"Jua",sans-serif;font-weight:400;font-size:17px;margin:6px 0 0;display:flex;align-items:center;gap:8px;color:var(--muted)}
+.slot-head.now{color:var(--ink)}
+.slot-head span{font-family:"IBM Plex Sans KR",sans-serif;font-size:11px;font-weight:600;background:var(--ball);color:#1C2825;border-radius:999px;padding:2px 8px}
+.done-toggle{display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--surface-2);border:1px solid var(--line);border-radius:14px;padding:11px 14px;font-size:14px;color:var(--muted)}
+.done-toggle b{color:var(--accent);font-weight:600;font-size:13px}
+
+/* ---- v10: 기록자 색 ---- */
+.who{display:inline-flex;align-items:center;gap:5px;font-size:13px;color:var(--muted)}
+.who i{width:8px;height:8px;border-radius:50%;flex:none}
+
+/* ---- v10: 되돌리기 토스트 ---- */
+.toast{display:flex;align-items:center;gap:12px}
+.toast button{color:var(--ball);font-weight:600;font-size:14px;padding:2px 4px}
