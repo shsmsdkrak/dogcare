@@ -57,6 +57,7 @@ function normItem(i){
     options:Array.isArray(i.options)?i.options.map(o=>String(o).trim().slice(0,12)).filter(Boolean).slice(0,8):[],
     stale:Math.max(0,Math.min(240,parseInt(i.stale)||0)), streak:!!i.streak, hidden:!!i.hidden,
     when:['am','noon','pm'].includes(i.when)?i.when:'',
+    gps:i.gps===undefined?(i.k==='walk'):!!i.gps,
     pick:(i.pick==='chip'||i.pick==='select')?i.pick:'',
     cycle:Math.max(0,Math.min(400,parseInt(i.cycle)||0)) };
 }
@@ -133,7 +134,7 @@ const ls = {
   set(k,v){try{localStorage.setItem(k,v)}catch(e){}}
 };
 
-const S = {days:{}, cfg:null, photos:{}, dog:ls.get('dogcare.dog')||'main', showDone:ls.get('dogcare.showDone')==='1', view:todayKey(), me:ls.get('dogcare.me')||'', status:'connecting', fid:null};
+const S = {days:{}, cfg:null, photos:{}, walk:null, dog:ls.get('dogcare.dog')||'main', showDone:ls.get('dogcare.showDone')==='1', view:todayKey(), me:ls.get('dogcare.me')||'', status:'connecting', fid:null};
 let store = null;
 setCfg({});
 
@@ -367,7 +368,7 @@ function render(){
     <div class="row" data-edit-entry="${e.id}">
       <span class="time num">${hm(e.t)}</span>
       <span class="ic">${icon(T[e.type].icon,20)}</span>
-      <span class="what"><b>${esc(T[e.type].name)}</b>${e.status?` <span>· ${esc(e.status)}</span>`:''}${e.note?` <span>· ${esc(e.note)}</span>`:''}<br>${whoDot(e.by)}</span>
+      <span class="what"><b>${esc(T[e.type].name)}</b>${e.dur?` <span>· ${fmtDur(e.dur)}${e.dist?` · ${fmtDist(e.dist)}`:''}</span>`:''}${e.status?` <span>· ${esc(e.status)}</span>`:''}${e.note?` <span>· ${esc(e.note)}</span>`:''}<br>${whoDot(e.by)}${e.trk?'<span class="trk-tag">경로</span>':''}</span>
       <button class="del" type="button" data-del="${e.id}" aria-label="${esc(T[e.type].name)} 기록 삭제">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>`).join(''):`<div class="empty">${isToday?'위 카드를 눌러 첫 기록을 남겨 보세요':'이 날은 기록이 없어요'}</div>`;
@@ -453,12 +454,14 @@ function logSheet(type){
       : `<div class="field"><label>상태</label><div class="chips" id="opts">${t.options.map((o,i)=>`<button type="button" class="chip" aria-pressed="${i===0}" data-o="${esc(o)}">${esc(o)}</button>`).join('')}</div></div>`):''}
     <div class="field"><label for="logTime">시간</label><input id="logTime" type="time" value="${defTime}"></div>
     <div class="field"><label for="logNote">메모 (선택)</label><input id="logNote" type="text" maxlength="60" placeholder="${type==='meds'?'예: 심장사상충약':type==='snack'?'예: 개껌 1개':'남길 말이 있으면 적어 주세요'}"></div>
-    <button class="primary" id="logSave" type="button">${esc(S.me)} 이름으로 기록</button>`,
+    ${t.gps&&isToday&&!S.walk?'<button class="primary" id="walkStart" type="button">지금 산책 시작 (동선 기록)</button>':''}
+    <button class="${t.gps&&isToday&&!S.walk?'secondary':'primary'}" id="logSave" type="button">${esc(S.me)} 이름으로 바로 기록</button>`,
   sheet=>{
     sheet.querySelectorAll('#opts .chip').forEach(c=>c.onclick=()=>{
       sheet.querySelectorAll('#opts .chip').forEach(x=>x.setAttribute('aria-pressed','false'));
       c.setAttribute('aria-pressed','true');
     });
+    if($('walkStart')) $('walkStart').onclick=()=>startWalk(type);
     if($('optSel')) $('optSel').onchange=()=>{
       const etc=$('optSel').value==='__etc'; $('optEtc').hidden=!etc; if(etc) $('optEtc').focus();
     };
@@ -616,9 +619,11 @@ function entryEditSheet(id){
     <div class="field"><label for="eeTime">시간</label><input id="eeTime" type="time" value="${hm(e.t)}"></div>
     <div class="field"><label for="eeNote">메모</label><input id="eeNote" type="text" maxlength="60" value="${esc(e.note||'')}"></div>
     <p class="note" style="margin:0;text-align:left">${esc(e.by||'')} 기록</p>
+    ${e.trk?'<button type="button" class="secondary" id="eeMap">산책 경로 보기</button>':''}
     <button type="button" class="primary" id="eeSave">저장</button>
     <button type="button" class="secondary danger" id="eeDel">이 기록 삭제</button>`,
   sheet=>{
+    if($('eeMap')) $('eeMap').onclick=()=>walkMapSheet(S.view,e);
     if($('eeSel')) $('eeSel').onchange=()=>{ const etc=$('eeSel').value==='__etc'; $('eeEtc').hidden=!etc; if(etc)$('eeEtc').focus(); };
     $('eeSave').onclick=()=>{
       const [h,m]=($('eeTime').value||hm(e.t)).split(':').map(Number);
@@ -627,6 +632,7 @@ function entryEditSheet(id){
       if($('eeSel')) status=$('eeSel').value==='__etc'?$('eeEtc').value.trim():$('eeSel').value;
       else status=$('eeEtc').value.trim();
       const next={type:e.type,t:d.getTime(),by:e.by||S.me,dog:e.dog||curDog().id};
+      if(e.dur) next.dur=e.dur; if(e.dist) next.dist=e.dist; if(e.trk) next.trk=e.trk;
       if(status) next.status=status.slice(0,20);
       const note=$('eeNote').value.trim(); if(note) next.note=note;
       store.updateEntry(S.view,id,next); closeSheet(); toast('기록을 고쳤어요');
@@ -691,6 +697,14 @@ function statsSheet(range){
       <div class="calwrap"><div class="calhead">${['월','화','수','목','금','토','일'].map(w=>`<span>${w}</span>`).join('')}</div>
       <div class="cal" id="cal">${cal}</div></div>
     </div>
+    ${(()=>{
+      const wk=keys.slice(-7); let cnt=0,dist=0,dur=0;
+      wk.forEach(k=>entriesOf(k).forEach(e=>{ if(e.dur||e.dist){ cnt++; dist+=e.dist||0; dur+=e.dur||0; } }));
+      return cnt?`<div class="field"><label>최근 7일 산책</label><div class="statgrid">
+        <div class="stat"><b class="num">${cnt}</b><span>횟수</span></div>
+        <div class="stat"><b class="num">${fmtDist(dist)}</b><span>총 거리</span></div>
+        <div class="stat"><b class="num">${fmtDur(dur)}</b><span>총 시간</span></div>
+      </div></div>`:'';})()}
     <div class="field"><label>항목별</label>
       <div class="bars">${rows.map(r=>`<div class="bar">
         <span class="bar-ic">${icon(r.it.icon,18)}</span>
@@ -773,7 +787,7 @@ function itemDeleteSheet(k){
 function itemEditSheet(k){
   const isNew=!k;
   const it=isNew?normItem({k:'c'+Date.now().toString(36),name:'',icon:'star',target:1}):{...T[k]};
-  let ic=it.icon, tg=it.target, streak=it.streak, opts=[...it.options], pick=it.pick, when=it.when||'';
+  let ic=it.icon, tg=it.target, streak=it.streak, opts=[...it.options], pick=it.pick, when=it.when||'', gps=!!it.gps;
   openSheet(`
     <h3><span style="color:var(--accent)" id="ieIcon">${icon(ic,26)}</span>${isNew?'새 항목':'항목 편집'}</h3>
     <div class="field"><label for="ieName">이름</label><input id="ieName" type="text" maxlength="12" value="${esc(it.name)}" placeholder="예: 목욕, 발톱 깎기"></div>
@@ -784,6 +798,8 @@ function itemEditSheet(k){
       <div class="optlist" id="ieOptList"></div>
       <button type="button" class="secondary" id="ieOptAdd">+ 선택지 추가</button>
     </div>
+    <div class="field"><label>산책 기록</label>
+      <button type="button" class="chip" id="ieGps" aria-pressed="${it.gps}">동선·거리 기록 (GPS)</button></div>
     <div class="field"><label>시간대</label><div class="chips" id="ieWhen">
       ${SLOTS.map(sl=>`<button type="button" class="chip" data-w="${sl.k}" aria-pressed="false">${sl.name}</button>`).join('')}
     </div></div>
@@ -827,11 +843,12 @@ function itemEditSheet(k){
     sheet.querySelectorAll('#ieWhen .chip').forEach(c=>c.onclick=()=>{ when=c.dataset.w; drawWhen(); });
     $('ieMinus').onclick=()=>{ tg=Math.max(0,tg-1); $('ieTarget').textContent=tg; };
     $('iePlus').onclick=()=>{ tg=Math.min(10,tg+1); $('ieTarget').textContent=tg; };
+    $('ieGps').onclick=()=>{ gps=!gps; $('ieGps').setAttribute('aria-pressed',String(gps)); };
     $('ieStreak').onclick=()=>{ streak=!streak; $('ieStreak').setAttribute('aria-pressed',String(streak)); };
     $('ieBack').onclick=itemsSheet;
     $('ieSave').onclick=()=>{
       const name=$('ieName').value.trim(); if(!name){ $('ieName').focus(); toast('이름을 입력해 주세요'); return; }
-      const next=normItem({...it, name, icon:ic, target:tg, streak, options:opts, pick, when, stale:$('ieStale').value, cycle:$('ieCycle').value});
+      const next=normItem({...it, name, icon:ic, target:tg, streak, options:opts, pick, when, gps, stale:$('ieStale').value, cycle:$('ieCycle').value});
       const items=S.cfg.items.map(i=>({...i}));
       const at=items.findIndex(i=>i.k===next.k); if(at>=0) items[at]=next; else items.push(next);
       saveItems(items); toast(isNew?`${name} 항목을 추가했어요`:'저장했어요'); itemsSheet();
@@ -896,6 +913,127 @@ function initDragSort(list, onDone){
   });
 }
 
+
+
+/* ---------- 산책 동선 기록 ---------- */
+const R_EARTH=6371000;
+function distM(a,b){
+  const toR=x=>x*Math.PI/180;
+  const dLat=toR(b.lat-a.lat), dLng=toR(b.lng-a.lng);
+  const s1=Math.sin(dLat/2)**2 + Math.cos(toR(a.lat))*Math.cos(toR(b.lat))*Math.sin(dLng/2)**2;
+  return 2*R_EARTH*Math.asin(Math.sqrt(s1));
+}
+const fmtDist = m=>m>=1000?`${(m/1000).toFixed(2)}km`:`${Math.round(m)}m`;
+const fmtDur = ms=>{ const min=Math.round(ms/60000); return min>=60?`${Math.floor(min/60)}시간 ${min%60}분`:`${min}분`; };
+let walkTimer=null, wakeLock=null;
+
+function saveWalkState(){ try{ ls.set('dogcare.walk', S.walk?JSON.stringify(S.walk):''); }catch(e){} }
+function loadWalkState(){
+  try{
+    const raw=ls.get('dogcare.walk'); if(!raw) return;
+    const w=JSON.parse(raw);
+    if(!w||!w.startT||Date.now()-w.startT>12*36e5) { ls.set('dogcare.walk',''); return; }
+    S.walk=w; startWatch(); tickWalk();
+  }catch(e){}
+}
+function startWatch(){
+  if(!navigator.geolocation) return;
+  S.walk.watchId=navigator.geolocation.watchPosition(pos=>{
+    const p={lat:pos.coords.latitude, lng:pos.coords.longitude, t:Date.now(), acc:pos.coords.accuracy};
+    if(p.acc>60) return;                       // 정확도가 낮은 신호는 버려요
+    const lastArr=S.walk.pts[S.walk.pts.length-1];
+    const last=lastArr?{lat:lastArr[0],lng:lastArr[1],t:lastArr[2]}:null;
+    if(last){
+      const d=distM(last,p);
+      if(d<4) return;                          // 제자리 흔들림 무시
+      if(d>200 && p.t-last.t<5000) return;     // 순간 이동한 듯한 값 무시
+      S.walk.dist+=d;
+    }
+    S.walk.pts.push([Math.round(p.lat*1e5)/1e5, Math.round(p.lng*1e5)/1e5, p.t]);
+    if(S.walk.pts.length>1500) S.walk.pts=S.walk.pts.filter((_,i)=>i%2===0);  // 너무 길면 솎아내요
+    saveWalkState(); tickWalk();
+  }, err=>{
+    console.error(err);
+    if(err.code===1) toast('위치 권한이 없어서 동선을 그릴 수 없어요. 시간과 완료는 기록돼요');
+  }, {enableHighAccuracy:true, maximumAge:5000, timeout:20000});
+}
+async function startWalk(type){
+  if(S.walk){ toast('이미 산책을 기록하고 있어요'); return; }
+  if(!S.me){ nameSheet(()=>startWalk(type)); return; }
+  S.walk={type, startT:Date.now(), pts:[], dist:0, by:S.me, dog:curDog().id, day:todayKey()};
+  saveWalkState(); closeSheet(); startWatch(); tickWalk();
+  try{ if(navigator.wakeLock) wakeLock=await navigator.wakeLock.request('screen'); }catch(e){}
+  toast('산책을 시작했어요. 화면을 켜둬야 동선이 이어져요');
+}
+function tickWalk(){
+  const el=$('walkbar'); if(!el) return;
+  if(!S.walk){ el.hidden=true; clearInterval(walkTimer); walkTimer=null; return; }
+  el.hidden=false;
+  const nm=T[S.walk.type]?T[S.walk.type].name:'산책';
+  el.innerHTML=`<span class="dot"></span>
+    <span class="wk-main"><b>${esc(nm)} 기록 중</b><span class="num">${fmtDur(Date.now()-S.walk.startT)} · ${fmtDist(S.walk.dist)}${S.walk.pts.length?'':' · 위치 잡는 중…'}</span></span>
+    <button type="button" id="walkDone" class="wk-done">완료</button>
+    <button type="button" id="walkCancel" class="wk-x" aria-label="취소">✕</button>`;
+  $('walkDone').onclick=finishWalk;
+  $('walkCancel').onclick=()=>confirmSheet('산책 기록을 취소할까요?','지금까지 걸은 기록이 저장되지 않아요.',cancelWalk);
+  if(!walkTimer) walkTimer=setInterval(tickWalk,1000);
+}
+function stopWatch(){
+  if(S.walk&&S.walk.watchId!=null&&navigator.geolocation) navigator.geolocation.clearWatch(S.walk.watchId);
+  if(wakeLock){ try{ wakeLock.release(); }catch(e){} wakeLock=null; }
+  clearInterval(walkTimer); walkTimer=null;
+}
+function cancelWalk(){ stopWatch(); S.walk=null; saveWalkState(); tickWalk(); render(); toast('산책 기록을 취소했어요'); }
+async function finishWalk(){
+  if(!S.walk) return;
+  const w=S.walk; stopWatch(); S.walk=null; saveWalkState();
+  const day=w.day||todayKey(), id=newId();
+  const dur=Date.now()-w.startT;
+  const entry={type:w.type, t:w.startT, by:w.by, dog:w.dog, dur, dist:Math.round(w.dist)};
+  if(w.pts.length>1){ entry.trk=id; }
+  store.addEntry(day,id,entry);
+  if(w.pts.length>1) store.setDocData(`walks/${day}_${id}`,{pts:w.pts,start:w.startT,end:Date.now(),by:w.by,dog:w.dog},false);
+  tickWalk(); render();
+  toast(`산책 완료 — ${fmtDur(dur)} · ${fmtDist(w.dist)}`);
+}
+
+/* 경로 보기 (지도) */
+function loadLeaflet(){
+  if(window.L) return Promise.resolve();
+  return new Promise((res,rej)=>{
+    const css=document.createElement('link'); css.rel='stylesheet'; css.href='https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css'; document.head.appendChild(css);
+    const js=document.createElement('script'); js.src='https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js';
+    js.onload=res; js.onerror=rej; document.head.appendChild(js);
+  });
+}
+async function walkMapSheet(day, entry){
+  openSheet('<div class="empty">경로를 불러오는 중…</div>',null,{full:true,title:'산책 경로'});
+  const doc=await store.getDocData(`walks/${day}_${entry.trk}`);
+  const pts=(doc&&doc.pts)||[];
+  const stat=`${fmtDur(entry.dur||0)} · ${fmtDist(entry.dist||0)}${entry.dur?` · 평균 ${((entry.dist||0)/1000/((entry.dur||1)/36e5)).toFixed(1)}km/h`:''}`;
+  openSheet(`
+    <div class="statgrid">
+      <div class="stat"><b class="num">${fmtDist(entry.dist||0)}</b><span>거리</span></div>
+      <div class="stat"><b class="num">${fmtDur(entry.dur||0)}</b><span>시간</span></div>
+      <div class="stat"><b class="num">${hm(entry.t)}</b><span>시작</span></div>
+    </div>
+    <div id="walkMap" class="walkmap"></div>
+    <p class="note" style="margin:0">${esc(day.replace(/-/g,'.'))} · ${esc(entry.by||'')} · ${esc(stat)}</p>`,
+  async()=>{
+    if(!pts.length){ $('walkMap').innerHTML='<div class="empty">저장된 경로가 없어요</div>'; return; }
+    try{
+      await loadLeaflet();
+      const latlngs=pts.map(p=>[p[0],p[1]]);
+      const map=L.map('walkMap',{zoomControl:false,attributionControl:true});
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+      const line=L.polyline(latlngs,{color:'#0E6B5C',weight:5,opacity:.9}).addTo(map);
+      L.circleMarker(latlngs[0],{radius:7,color:'#fff',weight:2,fillColor:'#1E8449',fillOpacity:1}).addTo(map).bindTooltip('출발');
+      L.circleMarker(latlngs[latlngs.length-1],{radius:7,color:'#fff',weight:2,fillColor:'#C0392B',fillOpacity:1}).addTo(map).bindTooltip('도착');
+      map.fitBounds(line.getBounds(),{padding:[24,24]});
+      setTimeout(()=>map.invalidateSize(),200);
+    }catch(e){ console.error(e); $('walkMap').innerHTML='<div class="empty">지도를 불러오지 못했어요</div>'; }
+  },{full:true,title:'산책 경로'});
+}
 
 /* ---------- 가족(기록자) 관리 ---------- */
 function membersSheet(){
@@ -1459,6 +1597,7 @@ async function start(after){
   render();
   if(after) setTimeout(()=>{ if($('sheetHost').innerHTML) return; if(!S.me) nameSheet(after); else after(); },300);
   try{ navigator.storage && navigator.storage.persist && navigator.storage.persist(); }catch(e){}
+  loadWalkState();
 }
 addEventListener('online',()=>{ if(S.status==='offline'){S.status='live';render();} });
 addEventListener('offline',()=>{ if(S.status==='live'){S.status='offline';render();} });
