@@ -269,12 +269,13 @@ function render(){
       if(t.stale&&hrs>=t.stale){warn=true;lastTxt=`마지막 기록 후 ${Math.floor(hrs)}시간 지났어요`;}
     }
     const partial=goal>1&&n>0&&n<goal;
+    const logged=!goal&&n>0;
     const dots=goal>0&&goal<=4?`<div class="dots">${Array.from({length:goal},(_,i)=>`<i class="${i<n?'on':''}"></i>`).join('')}</div>`:'';
     const streak=t.streak?streakOf(t.k):0;
     const badge=streak>=2?`<span class="badge">${streak}일 연속</span>`:'';
     const cnt=`<span class="cnt num ${done?'done':''}">${n}${goal?`<small style="font-size:14px">/${goal}</small>`:''}</span>`;
-    return `<button class="tile ${done?'complete':''} ${partial?'partial':''} ${warn&&isToday?'alert':''}" type="button" data-type="${t.k}">
-      <div class="top"><span class="ic">${icon(t.icon)}</span>${partial?`<span class="partmark num">${goal-n}회 남음</span>`:''}${done?'<span class="donemark"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>완료</span>':(badge||cnt)}</div>
+    return `<button class="tile ${done?'complete':''} ${partial?'partial':''} ${logged?'logged':''} ${warn&&isToday?'alert':''}" type="button" data-type="${t.k}">
+      <div class="top"><span class="ic">${icon(t.icon)}</span>${partial?`<span class="partmark num">${goal-n}회 남음</span>`:''}${logged?`<span class="logmark num">${n}회 기록</span>`:''}${done?'<span class="donemark"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>완료</span>':(badge||cnt)}</div>
       <div class="name">${esc(t.name)}${(badge||done)?` ${cnt.replace('font-size:14px','font-size:12px')}`:''}</div>
       ${dots}
       <div class="last ${warn&&isToday?'warn':''}">${lastTxt}</div>
@@ -464,6 +465,50 @@ function settingsSheet(){
       setCfg(cfg); store.saveConfig(S.cfg); render(); closeSheet(); toast('설정을 저장했어요');
     };
   });
+}
+
+/* ---------- 알림 ---------- */
+// 앱이 열려 있을 때 가족의 새 기록을 알려줘요.
+// (앱을 완전히 닫은 상태로도 받는 푸시 알림은 발송 서버가 필요해 Firebase 유료 요금제가 있어야 해요)
+let seenIds=new Set(), seeded=false;
+const notifyOn = ()=>ls.get('dogcare.notify')==='on';
+function notify(title, body){
+  if(document.hidden && notifyOn() && 'Notification' in window && Notification.permission==='granted'){
+    try{
+      if(navigator.serviceWorker && navigator.serviceWorker.ready)
+        navigator.serviceWorker.ready.then(r=>r.showNotification(title,{body,icon:'icon-192.png',badge:'icon-192.png',tag:'dogcare'})).catch(()=>new Notification(title,{body}));
+      else new Notification(title,{body});
+      return;
+    }catch(e){}
+  }
+  toast(body?`${title} — ${body}`:title);
+}
+function notifyChanges(days){
+  const ids=new Set();
+  Object.keys(days).forEach(k=>{
+    const es=(days[k]&&days[k].entries)||{};
+    Object.keys(es).forEach(id=>{ if(es[id]) ids.add(id+'@'+k); });
+  });
+  if(!seeded){ seenIds=ids; seeded=true; return; }
+  const fresh=[];
+  ids.forEach(key=>{ if(!seenIds.has(key)) fresh.push(key); });
+  seenIds=ids;
+  fresh.forEach(key=>{
+    const [id,k]=key.split('@');
+    const e=days[k].entries[id];
+    if(!e || e.by===S.me) return;                    // 내가 남긴 기록은 알리지 않음
+    if(Date.now()-(e.t||0) > 12*36e5) return;        // 오래된 기록 정리 중 생긴 변화는 무시
+    const nm=T[e.type]?T[e.type].name:'케어';
+    notify(`${e.by||'가족'}님이 ${nm} 기록했어요`, `${hm(e.t)}${e.status?` · ${e.status}`:''}${e.note?` · ${e.note}`:''}`);
+  });
+}
+async function toggleNotify(){
+  if(notifyOn()){ ls.set('dogcare.notify','off'); toast('알림을 껐어요'); return; }
+  if(!('Notification' in window)){ toast('이 브라우저는 알림을 지원하지 않아요'); return; }
+  let perm=Notification.permission;
+  if(perm==='default'){ try{ perm=await Notification.requestPermission(); }catch(e){} }
+  if(perm!=='granted'){ toast('브라우저 설정에서 알림을 허용해 주세요'); return; }
+  ls.set('dogcare.notify','on'); toast('알림을 켰어요');
 }
 
 /* ---------- 빠른 기록 (길게 누르기) ---------- */
@@ -802,7 +847,8 @@ function menuSheet(){
     {ic:'star',  t:'기록 돌아보기', d:'달력 · 항목별 달성률 · 가족별 기록', fn:()=>statsSheet()},
     {ic:'heart', t:'강아지 정보',   d:`사진 · 품종 · 생일 · 몸무게`, fn:settingsSheet},
     {ic:'brush', t:'케어 목록 편집', d:'항목 추가 · 아이콘 · 목표 · 선택지', fn:itemsSheet},
-    {ic:'home',  t:'가족 초대',     d:'초대 링크 만들어 보내기', fn:inviteSheet}
+    {ic:'home',  t:'가족 초대',     d:'초대 링크 만들어 보내기', fn:inviteSheet},
+    {ic:'bell',  t:'알림', d:(notifyOn()?'켜짐':'꺼짐')+' — 가족이 기록하면 알려줘요', fn:()=>toggleNotify().then(menuSheet)}
   ];
   openSheet(`
     <button type="button" class="menu-me" id="menuMe">
@@ -942,6 +988,8 @@ document.addEventListener('touchend',e=>{
 $('createBtn').onclick=()=>{ setFid(makeFid()); start(inviteSheet); };
 $('joinBtn').onclick=()=>{ const f=fidFromText($('joinInput').value); if(!f){toast('초대 링크를 다시 확인해 주세요');return} setFid(f); start(); };
 setInterval(render,60000);
+// 스크롤하면 헤더에 경계선 표시
+addEventListener('scroll',()=>{ const h=$('appHeader'); if(h) h.classList.toggle('stuck',(window.scrollY||0)>6); },{passive:true});
 document.addEventListener('visibilitychange',()=>{ if(!document.hidden) render(); });
 
 /* ================= 시작 ================= */
@@ -957,11 +1005,18 @@ async function start(after){
     catch(e){ console.error(e); store=memoryStore(); S.status='error'; }
   }
   store.subscribeDays((days,fromCache)=>{
+    notifyChanges(days);
     S.days=days;
     if(S.status==='connecting'||S.status==='live'||S.status==='offline') S.status=fromCache&&!navigator.onLine?'offline':'live';
     render();
   });
-  store.subscribeConfig(c=>{ setCfg(c); render(); });
+  store.subscribeConfig(c=>{
+    const before=S.cfg?S.cfg.items.map(i=>i.k+':'+i.name+':'+i.target+':'+i.hidden).join('|'):null;
+    setCfg(c);
+    const after=S.cfg.items.map(i=>i.k+':'+i.name+':'+i.target+':'+i.hidden).join('|');
+    if(seeded && before!==null && before!==after) notify('케어 목록이 바뀌었어요','가족 중 누군가 항목이나 목표를 수정했어요');
+    render();
+  });
   store.subscribePhoto(d=>{ S.photo=d||''; render(); });
   render();
   if(after) setTimeout(()=>{ if($('sheetHost').innerHTML) return; if(!S.me) nameSheet(after); else after(); },300);
@@ -981,3 +1036,4 @@ addEventListener('offline',()=>{ if(S.status==='live'){S.status='offline';render
   if(saved&&FID_RE.test(saved)){ setFid(saved); start(); return; }
   render(); // 처음 화면
 })();
+window.__test={notifyChanges,setMeForTest:v=>{S.me=v},days:()=>S.days};
